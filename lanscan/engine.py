@@ -87,9 +87,10 @@ async def _reverse_dns(ip: str, sem: asyncio.Semaphore) -> tuple[str, str | None
             return ip, None
 
 
-def read_arp(allowed_devices: set[str], targets: dict[str, str]) -> dict[str, tuple[str, str]]:
-    """ip -> (raw_mac, device) from the ARP table, skipping incomplete entries
-    and anything not on a scanned interface."""
+def read_arp(targets: dict[str, str]) -> dict[str, tuple[str, str]]:
+    """ip -> (raw_mac, device) from the ARP table, limited to hosts we actually
+    swept (so stale / off-subnet cache entries don't surface as devices), and
+    skipping incomplete rows and broadcast/multicast groups."""
     try:
         out = subprocess.run(["arp", "-a", "-n"], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
@@ -100,13 +101,12 @@ def read_arp(allowed_devices: set[str], targets: dict[str, str]) -> dict[str, tu
         if not m:
             continue
         mac, ip, dev = m["mac"], m["ip"], m["dev"]
-        if mac == "(incomplete)":
+        if mac == "(incomplete)" or ip not in targets:
             continue
-        low = mac.lower()
-        if low == "ff:ff:ff:ff:ff:ff" or low.startswith(("01:00:5e", "33:33")):
+        # macOS prints octets without leading zeros, so normalise before matching.
+        norm = vendors.normalize_mac(mac)
+        if norm and (norm == "FF:FF:FF:FF:FF:FF" or norm.startswith(("01:00:5E", "33:33"))):
             continue  # broadcast / multicast group, not a device
-        if dev not in allowed_devices and ip not in targets:
-            continue
         table[ip] = (mac, dev)
     return table
 
@@ -136,7 +136,6 @@ async def scan(
         return []
 
     targets = net.hosts_for(interfaces)  # ip -> device
-    allowed = {i.device for i in interfaces}
     self_ips = {i.ipv4: i for i in interfaces}
     gateway = net.default_gateway()
     now = time.time()
@@ -156,7 +155,7 @@ async def scan(
         if progress:
             progress(done, total)
 
-    arp = read_arp(allowed, targets)
+    arp = read_arp(targets)
 
     # 2. TCP fallback only for hosts still unaccounted for (no echo, no ARP).
     missing = [ip for ip in sweep if ip not in alive_icmp and ip not in arp]
@@ -167,7 +166,7 @@ async def scan(
             if ok:
                 alive_tcp.add(ip)
         if alive_tcp:
-            arp = read_arp(allowed, targets)  # re-read for freshly resolved MACs
+            arp = read_arp(targets)  # re-read for freshly resolved MACs
 
     # 3. Assemble devices: anything alive or with a complete ARP entry, plus self.
     broadcasts = net.broadcast_set(interfaces)

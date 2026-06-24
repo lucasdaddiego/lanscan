@@ -1,26 +1,15 @@
 # lanscan
 
-Discover the devices connected to your local network — a live terminal UI that
-lists every host on your Wi-Fi (and any plugged-in Ethernet), with MAC address,
-vendor, hostname, the services each device advertises, and the TCP ports it has
-open.
+Discover the devices connected to your local network — a live terminal UI with a
+**master/detail** split: a compact device list on the left, and full per-device
+detail on the right (MAC, vendor, hostname, the services each device advertises,
+and the TCP ports it has open). Works on your Wi-Fi and any plugged-in Ethernet.
 
 No root required, no `nmap`/`arp-scan` needed — it shells out to `ping`, `arp`,
 and uses mDNS/Bonjour for identification. **macOS only**; intended for networks
 you own or are authorised to scan.
 
-```
-┌─ lanscan ──────────────────────────────────────────────────────────────────┐
-│ [All] Wi-Fi (en0) 192.168.1.0/24     12 devices · last 22:07:21 · auto 30s   │
-│                                                                              │
-│   IP             Name              Vendor         MAC                Services│
-│ ● 192.168.1.1    (router)          Ubiquiti       a1:b2:c3:00:00:01          │
-│   192.168.1.10   my-laptop (this)  Apple          a1:b2:c3:00:00:0a  AirPlay…│
-│   192.168.1.14   TV                Samsung        a1:b2:c3:00:00:14  AirPlay,…│
-│   192.168.1.128  Living Room       Apple          a1:b2:c3:00:00:80  AirPlay,…│
-└──────────────────────────────────────────────────────────────────────────────┘
-  r Rescan  e Export  o Ports  f Full-scan  p Pause  a Wi-Fi/Eth/All  q Quit
-```
+![lanscan — master/detail TUI](docs/screenshot.png)
 
 ## Usage
 
@@ -60,9 +49,10 @@ clickable, so `e` doubles as an on-screen export button.
    and any subnet owned by a bridge are all skipped — so OrbStack/Docker/VM
    networks (e.g. `192.168.97.0/24`) and their containers never get swept.
    Re-checked every cycle, so a plugged-in Ethernet adapter appears on its own.
-2. **Sweep** — a concurrent ICMP ping sweep of the subnet. Every reachable host
-   must answer ARP, so reading the ARP table afterwards yields IP↔MAC for all of
-   them. A light TCP-connect probe mops up the rare hosts that ignore ICMP.
+2. **Sweep** — a concurrent ICMP ping sweep of the subnet (subnets larger than a
+   /22 are skipped — the status bar flags them). Every reachable host must answer
+   ARP, so reading the ARP table afterwards yields IP↔MAC for all of them. A light
+   TCP-connect probe mops up the rare hosts that ignore ICMP.
 3. **Identify** — reverse DNS for hostnames; mDNS/Bonjour (`zeroconf`) for
    friendly names and advertised services (AirPlay, Chromecast, printers, SSH…);
    OUI lookup for the hardware vendor.
@@ -89,12 +79,14 @@ common vendors and the rest show `?`.
 
 ## Requirements
 
-macOS, Python ≥ 3.11. `make install` creates `.venv`, installs the deps
-(`textual`, `zeroconf`, `platformdirs`), fetches the vendor DB, and links
-`lanscan` onto your PATH. Manual equivalent:
+macOS, Python ≥ 3.11, and [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
+`make install` creates `.venv`, installs the deps (`textual`, `zeroconf`,
+`ifaddr`, `platformdirs`), fetches the vendor DB, and symlinks `lanscan` into
+`~/.bin` — add that to your `PATH` to run `lanscan` from anywhere (otherwise use
+`make run`). Manual equivalent:
 
 ```sh
-uv venv --python 3.14 .venv
+uv venv --python 3.11 .venv   # any Python ≥ 3.11
 uv pip install -e .
 ```
 

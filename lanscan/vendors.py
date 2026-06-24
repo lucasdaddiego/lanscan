@@ -29,7 +29,6 @@ _BUILTIN: dict[str, str] = {
     "D8:3A:DD": "Raspberry Pi",
     "00:1A:11": "Google",
     "F4:F5:E8": "Google",
-    "DA:A1:19": "Google",
     "18:B4:30": "Nest Labs",
     "FC:65:DE": "Amazon",
     "44:65:0D": "Amazon",

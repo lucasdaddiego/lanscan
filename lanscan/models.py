@@ -56,7 +56,7 @@ class Device:
         if self.is_gateway:
             t.append("router")
         if self.is_self:
-            t.append("this device")
+            t.append("self")
         return t
 
     def ip_sort_key(self) -> tuple[int, ...]:

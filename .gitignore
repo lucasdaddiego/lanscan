@@ -5,5 +5,5 @@ __pycache__/
 build/
 dist/
 .DS_Store
-_*.py
+/_*.py
 lanscan-*.json

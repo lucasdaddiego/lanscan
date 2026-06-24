@@ -171,17 +171,29 @@ def broadcast_set(interfaces: list[Interface]) -> set[str]:
     return out
 
 
+# Subnets larger than this (a /22 = 1024 addresses) are skipped: actively
+# sweeping a /16+ would explode the scan, and such links are rare on a home LAN.
+MAX_SWEEP_ADDRESSES = 1024
+
+
+def sweepable(cidr: str) -> bool:
+    """True if the subnet is small enough to actively sweep."""
+    try:
+        return ipaddress.ip_network(cidr).num_addresses <= MAX_SWEEP_ADDRESSES
+    except ValueError:
+        return False
+
+
 def hosts_for(interfaces: list[Interface]) -> dict[str, str]:
     """Map every scannable host IP -> the device whose subnet owns it.
 
-    Caps each subnet at /22 (1022 hosts) so a misconfigured huge netmask can't
-    explode the sweep. Self addresses are kept (marked later, not pinged).
+    Subnets larger than a /22 are skipped (see ``sweepable``) so a huge netmask
+    can't explode the sweep. Self addresses are kept (marked later, not pinged).
     """
     targets: dict[str, str] = {}
     for iface in interfaces:
-        net = ipaddress.ip_network(iface.cidr)
-        if net.num_addresses > 1024:
+        if not sweepable(iface.cidr):
             continue
-        for host in net.hosts():
+        for host in ipaddress.ip_network(iface.cidr).hosts():
             targets.setdefault(str(host), iface.device)
     return targets

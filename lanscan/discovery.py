@@ -83,6 +83,7 @@ class MdnsDiscovery:
         self._browsers: list[AsyncServiceBrowser] = []
         self._types: set[str] = set()
         self._by_ip: dict[str, dict] = {}
+        self._by_name: dict[str, dict] = {}  # instance -> {ips, label, instance}
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -105,8 +106,12 @@ class MdnsDiscovery:
             self._loop.call_soon_threadsafe(self._add_type, name)
 
     def _on_service(self, zeroconf, service_type, name, state_change, **_) -> None:
-        if state_change in (ServiceStateChange.Added, ServiceStateChange.Updated) and self._loop:
+        if not self._loop:
+            return
+        if state_change in (ServiceStateChange.Added, ServiceStateChange.Updated):
             asyncio.run_coroutine_threadsafe(self._resolve(service_type, name), self._loop)
+        elif state_change is ServiceStateChange.Removed:
+            self._loop.call_soon_threadsafe(self._forget, name)
 
     async def _resolve(self, service_type: str, name: str) -> None:
         try:
@@ -119,19 +124,42 @@ class MdnsDiscovery:
                 return
             instance = name.removesuffix("." + service_type).removesuffix(".").strip()
             friendly = _friendly_from_txt(info)
-            for addr in info.parsed_addresses():
-                if ":" in addr:
-                    continue  # IPv4 only for the LAN table
+            added = friendly if friendly else (
+                instance if (instance and label != "device-info") else None)
+            ips = [a for a in info.parsed_addresses() if ":" not in a]  # IPv4 only
+            # remember this instance's contribution so a Removed event can undo it
+            self._by_name[name] = {"ips": set(ips), "label": label, "instance": added}
+            for addr in ips:
                 entry = self._by_ip.setdefault(
                     addr, {"name": None, "services": set(), "instances": set()})
                 entry["services"].add(label)
-                if friendly:
-                    entry["instances"].add(friendly)
-                elif instance and label != "device-info":
-                    entry["instances"].add(instance)
+                if added:
+                    entry["instances"].add(added)
                 entry["name"] = _best_name(entry["instances"])
         except Exception:  # noqa: BLE001 - never let discovery crash a scan
             return
+
+    def _forget(self, name: str) -> None:
+        """Drop a departed service instance, then rebuild each affected IP from
+        the records that remain — so a name still backed by a sibling service
+        type (Apple/Sonos/Chromecast advertise one name under several types) is
+        kept, and a stale name can't bleed onto whatever later reuses the IP."""
+        rec = self._by_name.pop(name, None)
+        if not rec:
+            return
+        for ip in rec["ips"]:
+            services: set[str] = set()
+            instances: set[str] = set()
+            for other in self._by_name.values():
+                if ip in other["ips"]:
+                    services.add(other["label"])
+                    if other["instance"]:
+                        instances.add(other["instance"])
+            if services or instances:
+                self._by_ip[ip] = {"name": _best_name(instances),
+                                   "services": services, "instances": instances}
+            else:
+                self._by_ip.pop(ip, None)
 
     def snapshot(self) -> dict[str, dict]:
         return {ip: {"name": v["name"], "services": set(v["services"])}

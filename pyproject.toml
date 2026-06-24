@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "textual>=8.0",
     "zeroconf>=0.140",
+    "ifaddr>=0.1.7",
     "platformdirs>=4.0",
 ]
 
