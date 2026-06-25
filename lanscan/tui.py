@@ -20,10 +20,13 @@ from rich.table import Table as RTable
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Footer, Header, Label, OptionList, Static
+from textual.widgets.option_list import Option
 
-from . import net, ports
+from . import launch, net, ports
 from .engine import scan
 from .models import Device
 
@@ -31,9 +34,9 @@ _KIND_CYCLE = {None: "wifi", "wifi": "ethernet", "ethernet": None}
 
 # Compact master columns; everything wide lives in the detail pane.
 _COLUMNS = (
-    ("", 2),        # status dot
-    ("Device", 28),  # name-or-IP, ellipsis-truncated
-    ("", 12),       # hint: top service or "N ports"
+    ("", 2),       # status dot
+    ("IP", 16),    # always shown
+    ("Name", 22),  # friendly name (+ role), blank when unknown
 )
 
 # Theme $vars resolve in Textual CSS, NOT inside raw rich style strings — so
@@ -57,6 +60,61 @@ def _kv() -> RTable:
 
 def _val(s: str | None) -> Text:
     return Text(s) if s else Text(DASH, style="dim")
+
+
+class DeviceTable(DataTable):
+    """The master list. Re-points Enter at the app's connect action (instead of
+    DataTable's hidden `select_cursor`) so the Footer advertises "Connect ▸"."""
+
+    BINDINGS = [Binding("enter", "app.connect", "Connect", show=True)]
+
+
+class PortPicker(ModalScreen):
+    """Pick one of a device's open ports → connect to it (browser / terminal).
+
+    Dismisses with (port, service) on selection, or None on cancel.
+    """
+
+    CSS = """
+    PortPicker { align: center middle; background: $background 55%; }
+    #picker {
+        width: 56; height: auto; max-height: 80%;
+        background: $surface; border: round $primary; padding: 1 2;
+    }
+    #picker-title { text-style: bold; width: 1fr; }
+    #picker OptionList { height: auto; max-height: 14; background: $surface; }
+    #picker-hint { color: $text-muted; padding-top: 1; }
+    """
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, ip: str, entries: list[tuple[int, str | None]]) -> None:
+        super().__init__()
+        self._ip = ip
+        self._entries = entries
+
+    def compose(self) -> ComposeResult:
+        opts = []
+        for port, service in self._entries:
+            line = Text()
+            line.append(f"{port:>5}  ", style="green")
+            line.append(f"{service or '?':<13}", style="" if service else "dim")
+            line.append(f"→ {launch.describe(self._ip, port, service)}", style="dim")
+            opts.append(Option(line, id=str(port)))
+        with Vertical(id="picker"):
+            yield Label(f"Connect to {self._ip}", id="picker-title")
+            yield OptionList(*opts)
+            yield Label("enter ▸ connect    esc ▸ cancel", id="picker-hint")
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        port = int(event.option.id)
+        service = next((s for p, s in self._entries if p == port), None)
+        self.dismiss((port, service))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class LanScanApp(App):
@@ -83,14 +141,15 @@ class LanScanApp(App):
     #detail { width: 1fr; height: auto; }
     """
     BINDINGS = [
+        ("enter", "connect", "Connect"),
         ("r", "rescan", "Rescan"),
         ("e", "export", "Export"),
-        ("o", "toggle_ports", "Ports on/off"),
-        ("f", "full_scan", "Full-scan device"),
+        ("o", "toggle_ports", "Ports"),
+        ("f", "full_scan", "Full-scan"),
         ("J", "scroll_detail_down", "Detail ▼"),
         ("K", "scroll_detail_up", "Detail ▲"),
-        ("p", "toggle_pause", "Pause/Resume"),
-        ("a", "cycle_kind", "Wi-Fi/Eth/All"),
+        ("p", "toggle_pause", "Pause"),
+        ("a", "cycle_kind", "Scope"),
         ("q", "quit", "Quit"),
     ]
 
@@ -114,18 +173,19 @@ class LanScanApp(App):
         self._progress = (0, 0)
         self._last_scan = 0.0
         self._scanned_once = False
+        self._detail_sig: tuple | None = None  # skip redundant detail re-renders
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield Header(show_clock=True, icon=" ")  # drop Textual's default ⭘ (spotty font coverage)
         yield Static("starting…", id="status")
         with Horizontal(id="body"):
-            table = DataTable(id="devices", zebra_stripes=True, cursor_type="row")
+            table = DeviceTable(id="devices", zebra_stripes=True, cursor_type="row")
             for label, width in _COLUMNS:
                 table.add_column(label, width=width)
             yield table
             with VerticalScroll(id="detail-wrap"):
                 yield Static(id="detail")
-        yield Footer()
+        yield Footer(compact=True)
 
     async def on_mount(self) -> None:
         self.title = "lanscan"
@@ -217,23 +277,19 @@ class LanScanApp(App):
             else:
                 dot = Text("·", style="dim")
 
-            nm = Text(d.name or d.ip, overflow="ellipsis", no_wrap=True,
-                      style=PAL["ip_new"] if (is_new and not d.name) else "")
-            if d.is_gateway:
-                nm.append("  (router)", style="dim")
-            elif d.is_self:
-                nm.append("  (self)", style="dim")
+            ip = Text(d.ip, overflow="ellipsis", no_wrap=True,
+                      style=PAL["ip_new"] if is_new else "")
 
-            if self._fullscan and d.ip == self._fullscan[0]:
-                hint = Text("scanning…", style="yellow", justify="right")
-            elif d.services:
-                hint = Text(d.services[0], style="dim", justify="right")
-            elif d.open_ports:
-                hint = Text(f"{len(d.open_ports)} ports", style="dim", justify="right")
-            else:
-                hint = Text("", justify="right")
+            nm = Text(overflow="ellipsis", no_wrap=True)
+            if d.name:
+                nm.append(d.name)
+            role = "router" if d.is_gateway else "self" if d.is_self else ""
+            if role:
+                if d.name:
+                    nm.append("  ")
+                nm.append(f"({role})", style="dim")
 
-            table.add_row(dot, nm, hint, key=d.ip)
+            table.add_row(dot, ip, nm, key=d.ip)
             if d.ip == prev_ip:
                 target_row = idx
 
@@ -252,6 +308,34 @@ class LanScanApp(App):
         self._selected_ip = event.row_key.value
         self._refresh_detail()
 
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        # A click on the already-highlighted row → connect. (Enter is handled by
+        # DeviceTable's `app.connect` binding so the Footer can advertise it.)
+        if event.row_key is not None and event.row_key.value is not None:
+            self._selected_ip = event.row_key.value
+        self.action_connect()
+
+    # ---- connect (launch a tool against an open port) -------------------
+    def action_connect(self) -> None:
+        dev = self._selected_device()
+        if dev is None:
+            return
+        if not dev.open_ports:
+            self.notify("No open ports — press f to full-scan this device.",
+                        severity="warning")
+            return
+        entries = [(p, ports.PORT_NAMES.get(p)) for p in dev.open_ports]
+        self.push_screen(PortPicker(dev.ip, entries),
+                         lambda res, ip=dev.ip: self._launch_port(ip, res))
+
+    def _launch_port(self, ip: str, result) -> None:
+        if not result:
+            return
+        port, service = result
+        ok, msg = launch.launch(ip, port, service)
+        self.notify(msg, title=f"Connect {ip}:{port}",
+                    severity="information" if ok else "error")
+
     # ---- detail pane ----------------------------------------------------
     def _device_by_ip(self, ip: str | None) -> Device | None:
         if ip is None:
@@ -261,19 +345,37 @@ class LanScanApp(App):
     def _selected_device(self) -> Device | None:
         return self._device_by_ip(self._selected_ip)
 
-    def _refresh_detail(self) -> None:
+    def _detail_signature(self, dev: Device | None) -> tuple:
+        """Everything the detail pane actually displays, so we can skip a redundant
+        re-render (which would otherwise wipe an in-progress mouse text selection)."""
+        if dev is None:
+            return ("placeholder", self._scanned_once, bool(self._devices), self._kind)
+        fs = self._fullscan if (self._fullscan and self._fullscan[0] == dev.ip) else None
+        return (
+            dev.ip, dev.name, dev.mdns_name, dev.hostname, dev.vendor, dev.mac,
+            dev.randomized_mac, dev.interface, dev.via, dev.is_gateway, dev.is_self,
+            tuple(dev.open_ports), tuple(dev.services),
+            dev.ip in self._new, dev.ip in self._full_ports, fs, int(dev.last_seen),
+        )
+
+    def _refresh_detail(self, *, force: bool = False) -> None:
         try:
             pane = self.query_one("#detail", Static)
         except Exception:  # noqa: BLE001 - not mounted yet
             return
-        pane.update(self._detail_renderable(self._selected_device()))
+        dev = self._selected_device()
+        sig = self._detail_signature(dev)
+        if sig == self._detail_sig and not force:
+            return  # unchanged → leave the rendered pane (and any text selection) alone
+        self._detail_sig = sig
+        pane.update(self._detail_renderable(dev))
 
     def _placeholder(self):
         scope = {None: "All", "wifi": "Wi-Fi", "ethernet": "Ethernet"}[self._kind]
         if not self._scanned_once:
-            glyph, title, sub = "◴", "Scanning your network…", f"discovering devices on {scope}"
+            glyph, title, sub = "◐", "Scanning your network…", f"discovering devices on {scope}"
         elif not self._devices:
-            glyph, title, sub = "∅", "No devices found", "press a to widen scope · r to rescan"
+            glyph, title, sub = "○", "No devices found", "press a to widen scope · r to rescan"
         else:
             glyph, title, sub = "←", "Select a device", "pick a row on the left"
         body = Group(
@@ -345,28 +447,31 @@ class LanScanApp(App):
             netg.add_row("Role", Text("this Mac", style="cyan"))
         blocks.append(section("NETWORK", netg))
 
-        # PORTS (omit unless there are any, or a full-scan of this host is running)
+        # PORTS (omit unless there are any, or a full-scan of this host is running).
+        # The count lives in the section header ("PORTS · 4 open"); the rows below
+        # are just the ports. Enter on a port (or the row) connects to it.
         scanning_here = bool(self._fullscan) and self._fullscan[0] == dev.ip
         full_done = dev.ip in self._full_ports
         if dev.open_ports or scanning_here or full_done:
+            n = len(dev.open_ports)
+            if scanning_here:
+                _, fdone, ftotal = self._fullscan
+                pct = 100 * fdone // ftotal if ftotal else 0
+                suffix = f"{n} open · scanning {pct}%" if n else f"scanning {pct}%"
+            elif full_done:
+                suffix = f"{n} open · full"
+            else:
+                suffix = f"{n} open"
             pt = _kv()
-            for p in dev.open_ports:
-                name = ports.PORT_NAMES.get(p)
-                pt.add_row(Text(f"{p:>5}", style="green"),
-                           Text(name or "?", style="" if name else "dim"))
             if dev.open_ports:
-                pt.add_row("", Text(f"{len(dev.open_ports)} open", style="dim"))
+                for p in dev.open_ports:
+                    name = ports.PORT_NAMES.get(p)
+                    pt.add_row(Text(f"{p:>5}", style="green"),
+                               Text(name or "?", style="" if name else "dim"))
             elif scanning_here:
                 pt.add_row("", Text("no open ports yet", style="dim"))
             else:
                 pt.add_row("", Text("no open ports", style="dim"))
-            if scanning_here:
-                _, fdone, ftotal = self._fullscan
-                suffix = f"scanning {100 * fdone // ftotal if ftotal else 0}%"
-            elif full_done:
-                suffix = "full"
-            else:
-                suffix = ""
             blocks.append(section("PORTS", pt, suffix=suffix))
 
         # SERVICES
@@ -456,8 +561,18 @@ class LanScanApp(App):
 
     def action_toggle_ports(self) -> None:
         self._ports = not self._ports
-        self.notify(f"Port scan {'on' if self._ports else 'off'}.")
-        self._trigger_scan()
+        if self._ports:
+            self.notify("Port scan on — rescanning.")
+            self._trigger_scan()
+        else:
+            # Reflect "off" instantly instead of waiting on a network sweep: drop the
+            # ports we already have (keeping any on-demand full-scan results).
+            self.notify("Port scan off.")
+            for d in self._devices:
+                if d.ip not in self._full_ports:
+                    d.open_ports = []
+            self._update_status()
+            self._refresh_detail(force=True)
 
     def action_full_scan(self) -> None:
         if self._fullscan is not None:  # one already running -> second press cancels
