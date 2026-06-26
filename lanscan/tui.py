@@ -23,6 +23,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.theme import Theme
 from textual.widgets import DataTable, Footer, Header, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -39,13 +40,88 @@ _COLUMNS = (
     ("Name", 22),  # friendly name (+ role), blank when unknown
 )
 
-# Theme $vars resolve in Textual CSS, NOT inside raw rich style strings — so
-# every rich renderable below uses concrete colour names from here.
-PAL = {
-    "ip": "cyan", "ip_new": "bold cyan", "new": "bold green",
-    "router": "yellow", "self": "cyan", "ok": "green", "svc": "magenta",
-    "warn": "yellow", "muted": "grey50", "label": "grey50", "head": "bold white",
+# 24-bit palette (Tokyo-Night-ish). Theme $vars resolve in Textual CSS but NOT
+# inside raw rich style strings, so every renderable below uses concrete hex —
+# which Ghostty (and any truecolor terminal) reproduces exactly.
+C = {
+    "blue": "#7aa2f7", "cyan": "#7dcfff", "green": "#9ece6a", "yellow": "#e0af68",
+    "orange": "#ff9e64", "purple": "#bb9af7", "red": "#f7768e", "teal": "#73daca",
+    "fg": "#c0caf5", "muted": "#7c83ad", "faint": "#565f89", "bg": "#1a1b26",
 }
+PAL = {
+    "ip": C["cyan"], "ip_new": f"bold {C['cyan']}", "new": f"bold {C['green']}",
+    "router": C["yellow"], "self": C["cyan"], "ok": C["green"], "svc": C["purple"],
+    "warn": C["yellow"], "muted": C["faint"], "label": C["muted"],
+    "head": f"bold {C['fg']}", "accent": C["blue"],
+}
+
+# A Textual theme so borders, scrollbars, the row cursor and panels all share the
+# palette above (CSS uses $primary / $surface / $panel / $accent, etc.).
+THEME = Theme(
+    name="lanscan", dark=True,
+    background=C["bg"], surface="#24283b", panel="#1f2335",
+    primary=C["blue"], secondary=C["purple"], accent=C["cyan"],
+    success=C["green"], warning=C["yellow"], error=C["red"], foreground=C["fg"],
+)
+
+
+def _badge(text: str, color: str) -> Text:
+    """A solid pill: dark text on a colour block."""
+    return Text(f" {text} ", style=f"bold {C['bg']} on {color}")
+
+
+# Port/service → category → colour, so a glance at the ports list groups them.
+_CAT_COLOR = {
+    "web": C["blue"], "shell": C["green"], "file": C["yellow"],
+    "media": C["purple"], "data": C["orange"], "iot": C["cyan"],
+    "mail": C["red"], "infra": C["muted"],
+}
+_SVC_CAT = {
+    "http": "web", "https": "web", "http-alt": "web", "https-alt": "web",
+    "dev-http": "web", "vite": "web", "prometheus": "web",
+    "ssh": "shell", "telnet": "shell", "rdp": "shell", "vnc": "shell",
+    "ftp": "file", "smb": "file", "afp": "file", "lpd": "file", "ipp": "file",
+    "printer": "file", "nfs": "file",
+    "airplay": "media", "cast": "media", "rtsp": "media", "plex": "media",
+    "jellyfin": "media",
+    "mysql": "data", "postgres": "data", "redis": "data", "mongodb": "data",
+    "mssql": "data", "influxdb": "data", "elasticsearch": "data",
+    "memcached": "data", "amqp": "data",
+    "mqtt": "iot", "mqtts": "iot", "upnp": "iot", "home-assistant": "iot",
+    "iphone": "iot",
+    "smtp": "mail", "imap": "mail", "imaps": "mail", "pop3": "mail",
+    "pop3s": "mail",
+    "docker": "infra", "msrpc": "infra", "netbios": "infra", "ldap": "infra",
+    "dns": "infra",
+}
+
+
+def _port_color(name: str | None) -> str:
+    return _CAT_COLOR.get(_SVC_CAT.get((name or "").lower(), ""), C["faint"])
+
+
+# mDNS service labels are free-form friendly names, so match by keyword.
+_SVC_KEYWORDS = (
+    ("airplay", "media"), ("airtunes", "media"), ("cast", "media"),
+    ("chromecast", "media"), ("spotify", "media"), ("dlna", "media"),
+    ("roku", "media"), ("sonos", "media"), ("print", "file"), ("ipp", "file"),
+    ("smb", "file"), ("afp", "file"), ("nfs", "file"), ("file", "file"),
+    ("time capsule", "file"), ("ssh", "shell"), ("sftp", "shell"),
+    ("remote", "shell"), ("homekit", "iot"), ("home", "iot"), ("matter", "iot"),
+    ("thread", "iot"), ("mqtt", "iot"), ("companion", "iot"), ("http", "web"),
+    ("web", "web"),
+)
+
+
+def _svc_color(label: str) -> str:
+    t = label.lower()
+    for key, cat in _SVC_KEYWORDS:
+        if key in t:
+            return _CAT_COLOR[cat]
+    return C["purple"]
+
+
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 DASH = "—"
 _VIA = {"icmp": "ICMP ping", "tcp": "TCP probe", "arp": "ARP", "self": "this host"}
 
@@ -95,8 +171,10 @@ class PortPicker(ModalScreen):
     def compose(self) -> ComposeResult:
         opts = []
         for port, service in self._entries:
+            col = _port_color(service)
             line = Text()
-            line.append(f"{port:>5}  ", style="green")
+            line.append("▪ ", style=col)
+            line.append(f"{port:>5}  ", style=f"bold {col}")
             line.append(f"{service or '?':<13}", style="" if service else "dim")
             line.append(f"→ {launch.describe(self._ip, port, service)}", style="dim")
             opts.append(Option(line, id=str(port)))
@@ -173,6 +251,7 @@ class LanScanApp(App):
         self._progress = (0, 0)
         self._last_scan = 0.0
         self._scanned_once = False
+        self._spin = 0  # braille-spinner frame, ticked while scanning
         self._detail_sig: tuple | None = None  # skip redundant detail re-renders
 
     def compose(self) -> ComposeResult:
@@ -189,6 +268,8 @@ class LanScanApp(App):
 
     async def on_mount(self) -> None:
         self.title = "lanscan"
+        self.register_theme(THEME)
+        self.theme = "lanscan"
         ports.raise_fd_limit()
         if not self.args.no_mdns:
             try:
@@ -199,8 +280,20 @@ class LanScanApp(App):
                 self._mdns = None
         self.set_interval(self.args.interval, self._trigger_scan)
         self.set_timer(1.2, self._trigger_scan)  # first scan after brief mDNS warmup
+        self.set_interval(0.1, self._tick_spin)  # animate the scan spinner
         self._update_status()
         self._refresh_detail()  # show the "Scanning…" placeholder up front
+
+    def _tick_spin(self) -> None:
+        """Advance the spinner only while there's activity to show — and only
+        repaint the detail pane during the very first scan, when it holds the
+        full-screen placeholder (later repaints could wipe a text selection)."""
+        if not (self._scanning or self._fullscan or not self._scanned_once):
+            return
+        self._spin = (self._spin + 1) % len(_SPINNER)
+        self._update_status()
+        if not self._scanned_once:
+            self._refresh_detail(force=True)
 
     async def on_unmount(self) -> None:
         if self._mdns is not None:
@@ -373,17 +466,20 @@ class LanScanApp(App):
     def _placeholder(self):
         scope = {None: "All", "wifi": "Wi-Fi", "ethernet": "Ethernet"}[self._kind]
         if not self._scanned_once:
-            glyph, title, sub = "◐", "Scanning your network…", f"discovering devices on {scope}"
+            glyph, gcol = _SPINNER[self._spin], C["cyan"]
+            title, sub = "Scanning your network…", f"discovering devices on {scope}"
         elif not self._devices:
-            glyph, title, sub = "○", "No devices found", "press a to widen scope · r to rescan"
+            glyph, gcol = "○", C["faint"]
+            title, sub = "No devices found", "press a to widen scope · r to rescan"
         else:
-            glyph, title, sub = "←", "Select a device", "pick a row on the left"
+            glyph, gcol = "←", C["blue"]
+            title, sub = "Select a device", "pick a row on the left"
         body = Group(
             Text(""),
-            Text(glyph, style="bold cyan", justify="center"),
+            Text(glyph, style=f"bold {gcol}", justify="center"),
             Text(""),
-            Text(title, style="bold", justify="center"),
-            Text(sub, style="grey50", justify="center"),
+            Text(title, style=f"bold {C['fg']}", justify="center"),
+            Text(sub, style=PAL["muted"], justify="center"),
         )
         return Align.center(body, vertical="middle")
 
@@ -396,17 +492,19 @@ class LanScanApp(App):
 
         title = Text()
         title.append("● " if is_new else "· ", style=PAL["new"] if is_new else "dim")
-        title.append(dev.ip, style=PAL["ip_new"] if is_new else "bold")
+        title.append(dev.ip, style=PAL["ip_new"] if is_new else f"bold {C['fg']}")
         for tag in dev.tags:
             title.append("  ")
             if tag == "router":
-                title.append(" ROUTER ", style="reverse yellow")
+                title.append_text(_badge("ROUTER", C["yellow"]))
             elif tag == "self":
-                title.append(" THIS MAC ", style="reverse cyan")
+                title.append_text(_badge("THIS MAC", C["cyan"]))
         blocks.append(title)
 
         def section(name, body, *, suffix=""):
-            head = Text(name, style=PAL["head"])
+            head = Text()
+            head.append("▌ ", style=PAL["accent"])
+            head.append(name, style=PAL["head"])
             if suffix:
                 head.append(f"  · {suffix}", style="dim")
             return Group(head, body)
@@ -434,7 +532,7 @@ class LanScanApp(App):
             mac = Text(dev.mac)
             if dev.randomized_mac:
                 mac.append("  ")
-                mac.append(" randomized ", style="reverse yellow")
+                mac.append_text(_badge("randomized", C["yellow"]))
         else:
             mac = Text(DASH, style="dim")
         netg.add_row("MAC", mac)
@@ -466,8 +564,10 @@ class LanScanApp(App):
             if dev.open_ports:
                 for p in dev.open_ports:
                     name = ports.PORT_NAMES.get(p)
-                    pt.add_row(Text(f"{p:>5}", style="green"),
-                               Text(name or "?", style="" if name else "dim"))
+                    col = _port_color(name)
+                    num = Text("▪ ", style=col)
+                    num.append(f"{p:>5}", style=f"bold {col}")
+                    pt.add_row(num, Text(name or "?", style="" if name else "dim"))
             elif scanning_here:
                 pt.add_row("", Text("no open ports yet", style="dim"))
             else:
@@ -476,7 +576,7 @@ class LanScanApp(App):
 
         # SERVICES
         if dev.services:
-            chips = Columns([Text(f" {s} ", style="reverse magenta") for s in dev.services],
+            chips = Columns([_badge(s, _svc_color(s)) for s in dev.services],
                             padding=(0, 1), expand=False)
             blocks.append(section("SERVICES", chips))
 
@@ -492,7 +592,7 @@ class LanScanApp(App):
             rel = f"{age}s ago" if age < 60 else f"{age // 60}m ago"
             act.add_row("Seen", Text(rel, style="dim"))
         if is_new:
-            act.add_row("New", Text("yes", style="green"))
+            act.add_row("New", Text("yes", style=PAL["ok"]))
         blocks.append(section("ACTIVITY", act))
 
         spaced = []
@@ -513,28 +613,42 @@ class LanScanApp(App):
                  + ("" if net.sweepable(i.cidr) else " (too large to sweep)")
                  for i in self._ifaces]
         nets = "  ".join(parts) or "no active interface"
-        left = f"[{scope}] {nets}"
+        spin = _SPINNER[self._spin]
+
+        line = Text(no_wrap=True, overflow="ellipsis")
+        line.append_text(_badge(scope, C["blue"]))
+        line.append(f" {nets}", style=PAL["muted"])
+        line.append("    ")
         if self._scanning:
             done, total = self._progress
             if total and done >= total:
-                state = "scanning ports…" if self._ports else "identifying…"
+                msg = "scanning ports…" if self._ports else "identifying…"
             elif total:
-                state = f"scanning {done}/{total}…"
+                msg = f"scanning {done}/{total}…"
             else:
-                state = "scanning…"
+                msg = "scanning…"
+            line.append(f"{spin} {msg}", style=C["cyan"])
         elif self._paused:
-            state = "paused (p to resume)"
+            line.append("paused ", style=C["yellow"])
+            line.append("(p to resume)", style=PAL["muted"])
         else:
             when = time.strftime("%H:%M:%S", time.localtime(self._last_scan)) if self._last_scan else "—"
             n = len(self._devices)
-            state = f"{n} device{'s' if n != 1 else ''} · last {when} · auto {self.args.interval:g}s"
-        extra = f" · {len(self._new)} new" if self._new else ""
+            line.append("● ", style=C["green"])
+            line.append(f"{n} device{'s' if n != 1 else ''}", style=C["fg"])
+            line.append(f" · last {when} · auto {self.args.interval:g}s", style=PAL["muted"])
+        if self._new:
+            line.append(f"  · {len(self._new)} new", style=C["green"])
         if not self._ports:
-            extra += " · ports off"
+            line.append("  · ports off", style=PAL["muted"])
         if self._fullscan:
             fip, fdone, ftotal = self._fullscan
-            extra += f" · full-scan {fip} {100 * fdone // ftotal if ftotal else 0}%"
-        status.update(f"{left}    {state}{extra}")
+            pct = 100 * fdone // ftotal if ftotal else 0
+            line.append(f"  · {spin} full-scan {fip} {pct}%", style=C["yellow"])
+        status.update(line)
+
+        ndev = len(self._devices)
+        self.sub_title = f"{ndev} device{'s' if ndev != 1 else ''} · {scope}"
 
     # ---- actions --------------------------------------------------------
     def action_rescan(self) -> None:
