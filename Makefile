@@ -5,8 +5,10 @@ PY             := $(VENV)/bin/python
 UV             := uv
 PYTHON_VERSION := 3.14
 
+RUFF_VERSION   := 0.15.20
+
 .DEFAULT_GOAL := help
-.PHONY: help install run vendors clean distclean
+.PHONY: help install run vendors dev test lint clean distclean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -27,6 +29,15 @@ run: $(PY) ## Launch the live TUI
 
 vendors: $(PY) ## Download the IEEE/Wireshark MAC vendor database
 	@$(PY) -m lanscan --update-vendors
+
+dev: $(PY) ## Install test/dev dependencies into the venv
+	$(UV) pip install --python $(PY) -e ".[dev]"
+
+test: dev ## Run the test suite (enforces 100% coverage)
+	@$(PY) -m pytest --cov=lanscan --cov-report=term-missing
+
+lint: ## Lint with ruff (same version CI pins)
+	@uvx ruff@$(RUFF_VERSION) check .
 
 clean: ## Remove caches and build artifacts
 	@rm -rf lanscan/__pycache__ __pycache__ *.egg-info build dist

@@ -632,7 +632,8 @@ class LanScanApp(App):
             line.append("paused ", style=C["yellow"])
             line.append("(p to resume)", style=PAL["muted"])
         else:
-            when = time.strftime("%H:%M:%S", time.localtime(self._last_scan)) if self._last_scan else "—"
+            when = (time.strftime("%H:%M:%S", time.localtime(self._last_scan))
+                    if self._last_scan else "—")
             n = len(self._devices)
             line.append("● ", style=C["green"])
             line.append(f"{n} device{'s' if n != 1 else ''}", style=C["fg"])

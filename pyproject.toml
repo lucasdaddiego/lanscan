@@ -3,7 +3,7 @@ name = "lanscan"
 version = "0.1.0"
 description = "Discover devices on your local LAN (Wi-Fi + Ethernet) with a live TUI."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Lucas Daddiego" }]
@@ -14,6 +14,8 @@ classifiers = [
     "Intended Audience :: System Administrators",
     "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: System :: Networking :: Monitoring",
     "Topic :: System :: Systems Administration",
 ]
@@ -25,12 +27,27 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ldaddiego/lanscan"
-Repository = "https://github.com/ldaddiego/lanscan"
-Issues = "https://github.com/ldaddiego/lanscan/issues"
+Homepage = "https://github.com/lucasdaddiego/lanscan"
+Repository = "https://github.com/lucasdaddiego/lanscan"
+Issues = "https://github.com/lucasdaddiego/lanscan/issues"
 
 [project.scripts]
 lanscan = "lanscan.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+]
+
+# PEP 735 group, so `uv sync --group dev` works too (mirrors the dev extra).
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -38,3 +55,29 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["lanscan"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["lanscan"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

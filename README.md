@@ -1,5 +1,7 @@
 # lanscan
 
+[![CI](https://github.com/lucasdaddiego/lanscan/actions/workflows/ci.yml/badge.svg)](https://github.com/lucasdaddiego/lanscan/actions/workflows/ci.yml)
+
 Discover the devices connected to your local network — a live terminal UI with a
 **master/detail** split: a compact device list on the left, and full per-device
 detail on the right (MAC, vendor, hostname, the services each device advertises,
@@ -79,14 +81,14 @@ common vendors and the rest show `?`.
 
 ## Requirements
 
-macOS, Python ≥ 3.11, and [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
+macOS, Python 3.14, and [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
 `make install` creates `.venv`, installs the deps (`textual`, `zeroconf`,
 `ifaddr`, `platformdirs`), fetches the vendor DB, and symlinks `lanscan` into
 `~/.bin` — add that to your `PATH` to run `lanscan` from anywhere (otherwise use
 `make run`). Manual equivalent:
 
 ```sh
-uv venv --python 3.11 .venv   # any Python ≥ 3.11
+uv venv --python 3.14 .venv
 uv pip install -e .
 ```
 
@@ -104,6 +106,21 @@ The package is split so new capabilities slot in cleanly:
 Natural next steps: HTTP-banner identification (use open web ports to name
 unknown devices), SSDP/UPnP discovery, persistent device history across runs, or
 alerts when an unknown device joins.
+
+## Development
+
+The test suite is hermetic — every shell-out (`ping`/`arp`/`ifconfig`/`networksetup`/
+`route`), socket, and mDNS browse is mocked — so it needs no root, no LAN, and no
+macOS, and runs in seconds. 100% line **and** branch coverage is enforced.
+
+```sh
+make dev      # install the test deps (pytest, pytest-asyncio, coverage) into .venv
+make test     # run the suite — fails if coverage drops below 100%
+make lint     # ruff
+```
+
+GitHub Actions runs the same suite plus ruff on every push and PR, on Python 3.14
+(Linux + macOS). See `.github/workflows/ci.yml`.
 
 ## License
 

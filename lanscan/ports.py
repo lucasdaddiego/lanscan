@@ -58,7 +58,7 @@ async def open_ports(ip: str, timeout: float, sem: asyncio.Semaphore,
                      ports: tuple[int, ...] = COMMON_PORTS) -> list[int]:
     """Return the sorted list of open TCP ports on `ip` (probed concurrently)."""
     results = await asyncio.gather(*(_is_open(ip, p, timeout, sem) for p in ports))
-    return [p for p, ok in zip(ports, results) if ok]
+    return [p for p, ok in zip(ports, results, strict=True) if ok]
 
 
 # --- On-demand full sweep of a single host (deliberately gentle) -------------
@@ -104,7 +104,7 @@ async def _check_one(ip: str, port: int, timeout: float) -> bool:
         except OSError:
             pass
         return True
-    return False
+    return False  # pragma: no cover - loop always returns by the final attempt
 
 
 async def full_scan(ip: str, *, timeout: float = FULL_TIMEOUT,

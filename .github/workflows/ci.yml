@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # Pinned so a new ruff release can't turn CI red without a deliberate bump.
+      - run: uvx ruff@0.15.20 check .
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Python 3.14 only; macOS is the real platform, Linux is the fast check.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Create venv (3.14)
+        run: uv venv --python 3.14
+
+      - name: Install package + test deps
+        run: uv pip install -e ".[dev]"
+
+      # The 100% line+branch gate lives in pyproject ([tool.coverage.report]
+      # fail_under = 100), so a coverage regression fails this step.
+      - name: Run tests with coverage gate
+        run: .venv/bin/pytest --cov=lanscan --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}
+          path: coverage.xml
+          if-no-files-found: ignore
