@@ -4,16 +4,17 @@
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](https://github.com/lucasdaddiego/lanscan/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.14-blue.svg)
-![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
 
 Discover the devices connected to your local network — a live terminal UI with a
 **master/detail** split: a compact device list on the left, and full per-device
 detail on the right (MAC, vendor, hostname, the services each device advertises,
 and the TCP ports it has open). Works on your Wi-Fi and any plugged-in Ethernet.
 
-No root required, no `nmap`/`arp-scan` needed — it shells out to `ping`, `arp`,
-and uses mDNS/Bonjour for identification. **macOS only**; intended for networks
-you own or are authorised to scan.
+No root required, no `nmap`/`arp-scan` needed — it shells out to `ping` and the
+OS neighbour table (`arp` on macOS, `ip neigh` on Linux), and uses mDNS/Bonjour
+for identification. **macOS and Linux**; intended for networks you own or are
+authorised to scan.
 
 ![lanscan — master/detail TUI](docs/screenshot.png)
 
@@ -49,11 +50,13 @@ clickable, so `e` doubles as an on-screen export button.
 
 ## How it works
 
-1. **Interfaces** — `networksetup`/`ifconfig` enumerate the active Wi-Fi and
-   Ethernet ports. Virtual networks are excluded by rule, not by luck: bridge
-   member interfaces, virtual-interface names (`bridge*`, `vmenet*`, `utun*`, …)
-   and any subnet owned by a bridge are all skipped — so OrbStack/Docker/VM
-   networks (e.g. `192.168.97.0/24`) and their containers never get swept.
+1. **Interfaces** — `networksetup`/`ifconfig` (macOS) or `ip`/`/proc/net/wireless`
+   (Linux) enumerate the active Wi-Fi and Ethernet ports. Virtual networks are
+   excluded by rule, not by luck: bridge/bond member interfaces, virtual-interface
+   names (`bridge*`, `vmenet*`, `utun*` on macOS; `docker*`, `veth*`, `virbr*`,
+   `br-*` on Linux, …) and any subnet owned by a bridge are all skipped — so
+   OrbStack/Docker/VM networks (e.g. `192.168.97.0/24`) and their containers never
+   get swept.
    Re-checked every cycle, so a plugged-in Ethernet adapter appears on its own.
 2. **Sweep** — a concurrent ICMP ping sweep of the subnet (subnets larger than a
    /22 are skipped — the status bar flags them). Every reachable host must answer
@@ -94,7 +97,7 @@ common vendors and the rest show `?`.
 
 ## Requirements
 
-macOS, Python 3.14, and [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
+macOS or Linux, Python 3.14, and [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
 `make install` creates `.venv`, installs the deps (`textual`, `zeroconf`,
 `ifaddr`, `platformdirs`), fetches the vendor DB, and symlinks `lanscan` into
 `~/.bin` — add that to your `PATH` to run `lanscan` from anywhere (otherwise use

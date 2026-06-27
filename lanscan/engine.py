@@ -13,24 +13,43 @@ import ipaddress
 import re
 import socket
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 
 from . import banners, net, ports, ssdp, vendors
 from .models import Device, Interface
 
+# macOS/BSD `arp -a -n` rows: "? (ip) at mac on dev ...".
 _ARP_LINE = re.compile(
     r"\((?P<ip>\d+\.\d+\.\d+\.\d+)\) at (?P<mac>[0-9a-fA-F:]+|\(incomplete\)) on (?P<dev>\S+)"
 )
+# Linux `ip neigh show` rows: "ip dev <dev> lladdr <mac> <state>". Rows without an
+# lladdr (INCOMPLETE/FAILED) simply don't match and are skipped.
+_NEIGH_LINE = re.compile(
+    r"^(?P<ip>\d+\.\d+\.\d+\.\d+)\s+dev\s+(?P<dev>\S+)\s+lladdr\s+(?P<mac>[0-9a-fA-F:]+)"
+)
 _TCP_PORTS = (80, 443, 22, 445, 7)
 ProgressCB = Callable[[int, int], None]
+
+
+def _is_linux() -> bool:
+    return sys.platform.startswith("linux")
+
+
+def _ping_argv(ip: str, timeout: float) -> list[str]:
+    """Single-probe ping argv. The per-probe timeout flag differs: BSD/macOS `-t`
+    is a wait in seconds, but Linux `-t` is the IP TTL — there the wait is `-W`."""
+    secs = str(max(1, int(timeout)))
+    flag = "-W" if _is_linux() else "-t"
+    return ["ping", "-c", "1", flag, secs, ip]
 
 
 async def _ping(ip: str, timeout: float, sem: asyncio.Semaphore) -> tuple[str, bool]:
     async with sem:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "ping", "-c", "1", "-t", str(max(1, int(timeout))), ip,
+                *_ping_argv(ip, timeout),
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
             )
         except OSError:
@@ -88,16 +107,23 @@ async def _reverse_dns(ip: str, sem: asyncio.Semaphore) -> tuple[str, str | None
 
 
 def read_arp(targets: dict[str, str]) -> dict[str, tuple[str, str]]:
-    """ip -> (raw_mac, device) from the ARP table, limited to hosts we actually
-    swept (so stale / off-subnet cache entries don't surface as devices), and
-    skipping incomplete rows and broadcast/multicast groups."""
+    """ip -> (raw_mac, device) from the neighbour/ARP table, limited to hosts we
+    actually swept (so stale / off-subnet cache entries don't surface as devices),
+    and skipping incomplete rows and broadcast/multicast groups.
+
+    macOS reads BSD `arp -a -n`; Linux reads `ip neigh show` (modern net-tools-free
+    equivalent). Both feed the same row filter."""
+    if _is_linux():
+        cmd, pattern = ["ip", "neigh", "show"], _NEIGH_LINE
+    else:
+        cmd, pattern = ["arp", "-a", "-n"], _ARP_LINE
     try:
-        out = subprocess.run(["arp", "-a", "-n"], capture_output=True, text=True, timeout=5).stdout
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         return {}
     table: dict[str, tuple[str, str]] = {}
     for line in out.splitlines():
-        m = _ARP_LINE.search(line)
+        m = pattern.search(line)
         if not m:
             continue
         mac, ip, dev = m["mac"], m["ip"], m["dev"]

@@ -158,6 +158,7 @@ this line does not match the arp pattern at all
 
 def test_read_arp_filters(monkeypatch):
     from types import SimpleNamespace
+    monkeypatch.setattr(engine, "_is_linux", lambda: False)
     targets = {f"192.168.0.{n}": "en0" for n in (1, 2, 5, 7, 9)}
     targets["224.0.0.251"] = "en0"
     monkeypatch.setattr(engine.subprocess, "run",
@@ -170,12 +171,55 @@ def test_read_arp_filters(monkeypatch):
     }
 
 
+# Linux `ip neigh show` rows: "ip dev <dev> lladdr <mac> <state>".
+_NEIGH_OUT = """\
+192.168.0.1 dev eth0 lladdr a:b:c:d:e:f REACHABLE
+192.168.0.2 dev eth0  INCOMPLETE
+10.0.0.99 dev eth0 lladdr aa:bb:cc:dd:ee:ff STALE
+224.0.0.251 dev eth0 lladdr 01:00:5e:00:00:fb PERMANENT
+fe80::1 dev eth0 lladdr de:ad:be:ef:00:01 REACHABLE
+192.168.0.5 dev eth0 lladdr ff:ff:ff:ff:ff:ff PERMANENT
+"""
+
+
+def test_read_arp_linux(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(engine, "_is_linux", lambda: True)
+    targets = {f"192.168.0.{n}": "eth0" for n in (1, 2, 5)}
+    targets["224.0.0.251"] = "eth0"
+    captured = {}
+
+    def fake_run(cmd, *a, **k):
+        captured["cmd"] = cmd
+        return SimpleNamespace(stdout=_NEIGH_OUT)
+
+    monkeypatch.setattr(engine.subprocess, "run", fake_run)
+    table = engine.read_arp(targets)
+    assert captured["cmd"] == ["ip", "neigh", "show"]
+    # .2 has no lladdr (INCOMPLETE), .251 is multicast, .5 is broadcast, 10.0.0.99
+    # isn't a target, fe80:: doesn't match the IPv4 pattern -> only .1 survives.
+    assert table == {"192.168.0.1": ("a:b:c:d:e:f", "eth0")}
+
+
 def test_read_arp_error(monkeypatch):
     def _boom(*a, **k):
         raise OSError("no arp")
 
     monkeypatch.setattr(engine.subprocess, "run", _boom)
     assert engine.read_arp({"x": "en0"}) == {}
+
+
+@pytest.mark.parametrize("linux,flag", [(True, "-W"), (False, "-t")])
+def test_ping_argv(monkeypatch, linux, flag):
+    monkeypatch.setattr(engine, "_is_linux", lambda: linux)
+    assert engine._ping_argv("10.0.0.9", 2.5) == ["ping", "-c", "1", flag, "2", "10.0.0.9"]
+
+
+def test_is_linux_reads_platform(monkeypatch):
+    monkeypatch.setattr(engine.sys, "platform", "linux2")
+    assert engine._is_linux() is True
+    monkeypatch.setattr(engine.sys, "platform", "darwin")
+    assert engine._is_linux() is False
 
 
 # ---- _is_host -------------------------------------------------------------

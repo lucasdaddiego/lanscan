@@ -48,6 +48,7 @@ def test_describe_is_plan_label():
 
 
 def test_launch_open(monkeypatch):
+    monkeypatch.setattr(launch, "_is_linux", lambda: False)
     spawned = []
     monkeypatch.setattr(launch, "_spawn", lambda argv: spawned.append(argv))
     ok, msg = launch.launch(IP, 80, None)
@@ -56,8 +57,18 @@ def test_launch_open(monkeypatch):
     assert msg == "browser → http://1.2.3.4"
 
 
+def test_launch_open_linux(monkeypatch):
+    monkeypatch.setattr(launch, "_is_linux", lambda: True)
+    spawned = []
+    monkeypatch.setattr(launch, "_spawn", lambda argv: spawned.append(argv))
+    ok, msg = launch.launch(IP, 80, None)
+    assert ok is True
+    assert spawned == [["xdg-open", "http://1.2.3.4"]]
+
+
 def test_launch_terminal(monkeypatch):
-    # Force the terminal choice so the message is deterministic.
+    # Force macOS + the terminal choice so the message is deterministic.
+    monkeypatch.setattr(launch, "_is_linux", lambda: False)
     monkeypatch.setattr(launch.os, "environ", {"TERM_PROGRAM": "Apple_Terminal"})
     spawned = []
     monkeypatch.setattr(launch, "_spawn", lambda argv: spawned.append(argv))
@@ -118,6 +129,7 @@ def test_pick_terminal_fallback_to_installed(monkeypatch, installed, expected):
 
 
 def test_terminal_argv_ghostty(monkeypatch):
+    monkeypatch.setattr(launch, "_is_linux", lambda: False)
     monkeypatch.setattr(launch.os, "environ",
                         {"TERM_PROGRAM": "ghostty", "SHELL": "/bin/zsh"})
     argv, name = launch._terminal_argv("ssh 1.2.3.4")
@@ -130,12 +142,14 @@ def test_terminal_argv_ghostty(monkeypatch):
 
 def test_terminal_argv_ghostty_default_shell(monkeypatch):
     # No $SHELL -> falls back to /bin/zsh.
+    monkeypatch.setattr(launch, "_is_linux", lambda: False)
     monkeypatch.setattr(launch.os, "environ", {"TERM_PROGRAM": "ghostty"})
     argv, _ = launch._terminal_argv("nc -v 1.2.3.4 9")
     assert "/bin/zsh" in argv[-1]
 
 
 def test_terminal_argv_iterm(monkeypatch):
+    monkeypatch.setattr(launch, "_is_linux", lambda: False)
     monkeypatch.setattr(launch.os, "environ", {"TERM_PROGRAM": "iTerm.app"})
     argv, name = launch._terminal_argv("ssh 1.2.3.4")
     assert name == "iTerm"
@@ -144,6 +158,7 @@ def test_terminal_argv_iterm(monkeypatch):
 
 
 def test_terminal_argv_terminal(monkeypatch):
+    monkeypatch.setattr(launch, "_is_linux", lambda: False)
     monkeypatch.setattr(launch.os, "environ", {"TERM_PROGRAM": "Apple_Terminal"})
     argv, name = launch._terminal_argv("ssh 1.2.3.4")
     assert name == "Terminal"
@@ -161,3 +176,73 @@ def test_terminal_script_escapes_quotes_and_backslashes():
 def test_terminal_script_iterm_variant():
     script = launch._terminal_script("ssh host", "iterm")
     assert "create window with default profile" in script
+
+
+# ---- Linux ----------------------------------------------------------------
+def test_is_linux_reads_platform(monkeypatch):
+    monkeypatch.setattr(launch.sys, "platform", "linux")
+    assert launch._is_linux() is True
+    monkeypatch.setattr(launch.sys, "platform", "darwin")
+    assert launch._is_linux() is False
+
+
+@pytest.mark.parametrize("linux,expected", [(True, "xdg-open"), (False, "open")])
+def test_open_cmd(monkeypatch, linux, expected):
+    monkeypatch.setattr(launch, "_is_linux", lambda: linux)
+    assert launch._open_cmd() == expected
+
+
+def test_pick_terminal_linux_prefers_available(monkeypatch):
+    monkeypatch.setattr(launch.os, "environ", {})
+    # Only konsole is installed -> it's chosen over earlier-listed terminals.
+    monkeypatch.setattr(launch.shutil, "which", lambda name: name == "konsole")
+    name, builder = launch._pick_terminal_linux()
+    assert name == "konsole"
+    assert builder("CMD") == ["konsole", "-e", "sh", "-c", "CMD"]
+
+
+def test_pick_terminal_linux_env_override(monkeypatch):
+    # $TERMINAL wins when it's a known, installed emulator.
+    monkeypatch.setattr(launch.os, "environ", {"TERMINAL": "/usr/bin/foot"})
+    monkeypatch.setattr(launch.shutil, "which", lambda name: name in ("foot", "xterm"))
+    name, builder = launch._pick_terminal_linux()
+    assert name == "foot"
+    assert builder("CMD") == ["foot", "sh", "-c", "CMD"]
+
+
+def test_pick_terminal_linux_env_unknown_falls_through(monkeypatch):
+    # An unknown $TERMINAL is ignored; the best installed one is used instead.
+    monkeypatch.setattr(launch.os, "environ", {"TERMINAL": "weird-term"})
+    monkeypatch.setattr(launch.shutil, "which", lambda name: name == "xterm")
+    name, _ = launch._pick_terminal_linux()
+    assert name == "xterm"
+
+
+def test_pick_terminal_linux_none_installed(monkeypatch):
+    monkeypatch.setattr(launch.os, "environ", {})
+    monkeypatch.setattr(launch.shutil, "which", lambda name: None)
+    name, builder = launch._pick_terminal_linux()
+    assert (name, builder) == ("sh", None)
+
+
+def test_terminal_argv_linux_with_terminal(monkeypatch):
+    monkeypatch.setattr(launch, "_is_linux", lambda: True)
+    monkeypatch.setattr(launch.os, "environ", {"SHELL": "/bin/bash"})
+    monkeypatch.setattr(launch, "_pick_terminal_linux",
+                        lambda: ("gnome-terminal",
+                                 lambda c: ["gnome-terminal", "--", "sh", "-c", c]))
+    argv, name = launch._terminal_argv("ssh 1.2.3.4")
+    assert name == "gnome-terminal"
+    assert argv[:4] == ["gnome-terminal", "--", "sh", "-c"]
+    inner = argv[-1]
+    assert inner.startswith("ssh 1.2.3.4; exec ") and "/bin/bash" in inner and inner.endswith("-i")
+
+
+def test_terminal_argv_linux_no_terminal_default_shell(monkeypatch):
+    monkeypatch.setattr(launch, "_is_linux", lambda: True)
+    monkeypatch.setattr(launch.os, "environ", {})  # no $SHELL -> /bin/sh
+    monkeypatch.setattr(launch, "_pick_terminal_linux", lambda: ("sh", None))
+    argv, name = launch._terminal_argv("nc -v 1.2.3.4 9")
+    assert name == "sh"
+    assert argv[:2] == ["sh", "-c"]
+    assert "/bin/sh" in argv[-1]

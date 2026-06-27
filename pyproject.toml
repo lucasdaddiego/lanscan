@@ -7,12 +7,13 @@ requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Lucas Daddiego" }]
-keywords = ["network", "lan", "scanner", "tui", "mdns", "bonjour", "arp", "ports", "macos"]
+keywords = ["network", "lan", "scanner", "tui", "mdns", "bonjour", "arp", "ports", "macos", "linux"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: System Administrators",
     "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3 :: Only",

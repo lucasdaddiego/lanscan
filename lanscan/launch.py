@@ -1,17 +1,29 @@
 """Open a connection to a device's open port using the right local tool.
 
 Web ports open in the default browser; file-sharing / screen-sharing / media
-ports open via their macOS URL scheme (`open smb://…` etc.); shell-oriented and
-unknown ports open a new terminal window running the relevant CLI so the user
-can interact. The terminal is whichever one you're running lanscan in — Ghostty,
-iTerm, or Terminal — falling back to the best installed one. Everything is
+ports open via their URL scheme (`open`/`xdg-open` smb://… etc.); shell-oriented
+and unknown ports open a new terminal window running the relevant CLI so the user
+can interact. On macOS the terminal is whichever one you're running lanscan in —
+Ghostty, iTerm, or Terminal — falling back to the best installed one; on Linux
+it's the first available GUI terminal (honouring `$TERMINAL`). Everything is
 best-effort and never raises into the TUI.
 """
 from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
+import sys
+
+
+def _is_linux() -> bool:
+    return sys.platform.startswith("linux")
+
+
+def _open_cmd() -> str:
+    """The OS opener for URL schemes: `xdg-open` on Linux, `open` on macOS."""
+    return "xdg-open" if _is_linux() else "open"
 
 # Ports whose service is plain HTTP (browser, no TLS). Anything web-ish but not
 # in the HTTPS set lands here.
@@ -69,7 +81,7 @@ def launch(ip: str, port: int, service: str | None) -> tuple[bool, str]:
     kind, target, label = plan(ip, port, service)
     try:
         if kind == "open":
-            _spawn(["open", target])
+            _spawn([_open_cmd(), target])
             return True, f"{label} → {target}"
         argv, term = _terminal_argv(target)
         _spawn(argv)
@@ -111,10 +123,54 @@ def _pick_terminal() -> str:
     return "terminal"
 
 
+# Linux GUI terminals, best-first, with the argv form that runs a shell command
+# in a fresh window. `-e`/`--`/bare-argv conventions differ per emulator, so each
+# carries its own builder. `$TERMINAL` (if set + installed) wins over this order.
+_LINUX_TERMINALS = [
+    ("ghostty", lambda c: ["ghostty", "-e", "sh", "-c", c]),
+    ("gnome-terminal", lambda c: ["gnome-terminal", "--", "sh", "-c", c]),
+    ("konsole", lambda c: ["konsole", "-e", "sh", "-c", c]),
+    ("xfce4-terminal", lambda c: ["xfce4-terminal", "-x", "sh", "-c", c]),
+    ("alacritty", lambda c: ["alacritty", "-e", "sh", "-c", c]),
+    ("kitty", lambda c: ["kitty", "sh", "-c", c]),
+    ("foot", lambda c: ["foot", "sh", "-c", c]),
+    ("xterm", lambda c: ["xterm", "-e", "sh", "-c", c]),
+]
+
+
+def _pick_terminal_linux():
+    """(name, argv-builder) for the terminal to use, or ("sh", None) if no GUI
+    terminal is installed. `$TERMINAL` takes priority when it's a known emulator."""
+    table = dict(_LINUX_TERMINALS)
+    order = [name for name, _ in _LINUX_TERMINALS]
+    env = os.environ.get("TERMINAL")
+    if env:
+        base = os.path.basename(env)
+        if base in table:
+            order = [base, *order]
+    for name in order:
+        if shutil.which(name):
+            return name, table[name]
+    return "sh", None
+
+
+def _terminal_argv_linux(command: str) -> tuple[list[str], str]:
+    """Argv opening a Linux terminal that runs `command`, then drops to an
+    interactive shell so the window stays readable after the command exits."""
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    inner = f"{command}; exec {shlex.quote(shell)} -i"
+    name, builder = _pick_terminal_linux()
+    if builder is None:  # no GUI terminal found — run headless, best-effort
+        return ["sh", "-c", inner], "sh"
+    return builder(inner), name
+
+
 def _terminal_argv(command: str) -> tuple[list[str], str]:
     """Argv that opens a new terminal window running `command`, plus a display
     name for the chosen terminal. `command` is a shell-free token string we built
     (ssh/telnet/nc + a validated IP)."""
+    if _is_linux():
+        return _terminal_argv_linux(command)
     term = _pick_terminal()
     if term == "ghostty":
         # macOS Ghostty can't be driven by AppleScript `do script`; the supported
