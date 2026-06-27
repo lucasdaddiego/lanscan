@@ -16,17 +16,20 @@ def test_parser_defaults():
     assert args.kind is None
     assert args.timeout == 1.0
     assert args.interval == 30.0
-    assert not any([args.no_resolve, args.no_mdns, args.no_ports, args.update_vendors])
+    assert not any([args.no_resolve, args.no_mdns, args.no_ports, args.no_ssdp,
+                    args.no_http, args.no_history, args.update_vendors])
 
 
 def test_parser_all_flags():
     args = main_mod._build_parser().parse_args([
         "--interface", "en0", "--kind", "wifi", "--no-resolve", "--no-mdns",
-        "--no-ports", "--timeout", "2.5", "--interval", "5", "--update-vendors",
+        "--no-ports", "--no-ssdp", "--no-http", "--no-history", "--timeout", "2.5",
+        "--interval", "5", "--update-vendors",
     ])
     assert args.interface == "en0"
     assert args.kind == "wifi"
     assert args.no_resolve and args.no_mdns and args.no_ports and args.update_vendors
+    assert args.no_ssdp and args.no_http and args.no_history
     assert args.timeout == 2.5
     assert args.interval == 5.0
 

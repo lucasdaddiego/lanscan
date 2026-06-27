@@ -16,7 +16,7 @@ import subprocess
 import time
 from collections.abc import Callable
 
-from . import net, ports, vendors
+from . import banners, net, ports, ssdp, vendors
 from .models import Device, Interface
 
 _ARP_LINE = re.compile(
@@ -126,7 +126,9 @@ async def scan(
     *,
     resolve: bool = True,
     mdns=None,
+    ssdp_enabled: bool = True,
     scan_ports: bool = True,
+    http_id: bool = True,
     progress: ProgressCB | None = None,
     timeout: float = 1.0,
     concurrency: int = 128,
@@ -211,14 +213,39 @@ async def scan(
                 d.mdns_name = hit.get("name") or d.mdns_name
                 d.services = sorted(hit.get("services", set()))
 
-    # 6. Per-device open-port scan (TCP connect, no root).
-    if scan_ports:
-        psem = asyncio.Semaphore(512)
+    # 5b + 6 + 7. SSDP/UPnP identity and the port + HTTP-banner phase are
+    # independent (they touch disjoint Device fields), so run them concurrently:
+    # the SSDP M-SEARCH's ~2s reply window overlaps the port scan instead of being
+    # tacked on after it. asyncio.gather cancels both if the scan is cancelled.
+    async def _ssdp_phase() -> None:
+        if not ssdp_enabled:
+            return
+        upnp = await ssdp.probe()
+        for d in devices:
+            info = upnp.get(d.ip)
+            if info:
+                d.upnp_name = info.get("name")
+                d.upnp_model = info.get("model") or info.get("server")
 
-        async def _fill(dev: Device) -> None:
-            dev.open_ports = await ports.open_ports(dev.ip, timeout, psem)
+    async def _ports_phase() -> None:
+        if scan_ports:
+            psem = asyncio.Semaphore(512)
 
-        await asyncio.gather(*(_fill(d) for d in devices))
+            async def _fill(dev: Device) -> None:
+                dev.open_ports = await ports.open_ports(dev.ip, timeout, psem)
+
+            await asyncio.gather(*(_fill(d) for d in devices))
+        if http_id:
+            bsem = asyncio.Semaphore(64)
+
+            async def _banner(dev: Device) -> None:
+                async with bsem:
+                    dev.http_server, dev.http_title = await banners.identify(
+                        dev.ip, dev.open_ports)
+
+            await asyncio.gather(*(_banner(d) for d in devices))
+
+    await asyncio.gather(_ssdp_phase(), _ports_phase())
 
     devices.sort(key=Device.ip_sort_key)
     return devices

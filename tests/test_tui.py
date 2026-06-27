@@ -188,6 +188,24 @@ def test_detail_scanning_with_ports():
     assert "1 open" in out and "scanning 30%" in out
 
 
+def test_detail_identity_and_history_rows():
+    app = bare_app()
+    dev = Device(
+        ip="192.168.0.7", upnp_name="Living Room TV", upnp_model="Acme X9",
+        http_server="lighttpd", http_title="Camera Login",
+        ever_seen=True, first_seen=time.time() - 3 * 86400, last_seen=time.time() - 5,
+    )
+    app._devices = [dev]
+    out = render(app._detail_renderable(dev))
+    assert "UPnP" in out and "Living Room TV" in out
+    assert "Web" in out and "Camera Login" in out
+    assert "Model" in out and "Acme X9" in out
+    assert "Server" in out and "lighttpd" in out
+    assert "returning device" in out                      # ever_seen
+    # first_seen 3 days ago -> rendered as a date, not just a clock time
+    assert time.strftime("%b %d", time.localtime(dev.first_seen)) in out
+
+
 def test_detail_scanning_zero_total():
     app = bare_app()
     dev = Device(ip="192.168.0.32", open_ports=[])
@@ -204,9 +222,9 @@ def test_detail_signature_placeholder_and_device():
     app._fullscan = ("10.0.0.1", 1, 2)
     sig = app._detail_signature(dev)
     assert sig[0] == "10.0.0.1"
-    assert sig[-2] == ("10.0.0.1", 1, 2)   # fullscan tuple captured when it matches
+    assert sig[-1] == ("10.0.0.1", 1, 2)   # fullscan tuple captured when it matches
     app._fullscan = ("10.0.0.9", 1, 2)
-    assert app._detail_signature(dev)[-2] is None  # non-matching fullscan -> None
+    assert app._detail_signature(dev)[-1] is None  # non-matching fullscan -> None
 
 
 # ---- unmounted guards (query_one raises -> early return) ------------------
@@ -818,6 +836,24 @@ async def test_mdns_start_failure_degrades(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app._mdns is None     # failure -> mDNS quietly disabled
+
+
+# ---- device history lifecycle --------------------------------------------
+async def test_history_lifecycle(monkeypatch):
+    loaded = {"AA:BB": {"first_seen": 1.0, "last_seen": 1.0, "name": "Old", "count": 5}}
+    saves = []
+    monkeypatch.setattr(tui.history, "load", lambda: dict(loaded))
+    monkeypatch.setattr(tui.history, "save", lambda recs: saves.append(dict(recs)))
+    dev = Device(ip="192.168.0.5", mac="AA:BB")
+    app = make_app(monkeypatch, devices=[dev], no_history=False)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app._history == loaded            # loaded on mount
+        await run_scan(app, pilot)
+        assert dev.first_seen == 1.0             # returning device inherits stored first_seen
+        assert dev.ever_seen is True
+        assert saves                             # persisted during _apply
+    assert len(saves) >= 2                       # also saved on unmount
 
 
 async def _empty_scan(interfaces, **kw):

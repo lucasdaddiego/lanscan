@@ -31,6 +31,10 @@ class Device:
     vendor: str | None = None
     hostname: str | None = None  # reverse DNS
     mdns_name: str | None = None  # friendly Bonjour name
+    upnp_name: str | None = None  # UPnP/SSDP friendlyName
+    upnp_model: str | None = None  # UPnP manufacturer / model
+    http_server: str | None = None  # HTTP Server header from an open web port
+    http_title: str | None = None  # <title> of the device's web UI
     services: list[str] = field(default_factory=list)
     open_ports: list[int] = field(default_factory=list)
     is_self: bool = False
@@ -39,15 +43,20 @@ class Device:
     via: str = ""  # how liveness was detected: icmp | tcp | arp
     first_seen: float = 0.0
     last_seen: float = 0.0
+    ever_seen: bool = False  # seen in a previous run (from persisted history)
 
     @property
     def name(self) -> str:
         """Best human-facing name for the device."""
         if self.mdns_name:
             return self.mdns_name
+        if self.upnp_name:
+            return self.upnp_name
         if self.hostname:
             # strip trailing dot / .local. noise but keep it readable
             return self.hostname.rstrip(".")
+        if self.http_title:
+            return self.http_title
         return ""
 
     @property
@@ -70,8 +79,11 @@ class Device:
         return {
             "ip": self.ip, "mac": self.mac, "vendor": self.vendor,
             "name": self.name, "hostname": self.hostname, "mdns_name": self.mdns_name,
+            "upnp_name": self.upnp_name, "upnp_model": self.upnp_model,
+            "http_server": self.http_server, "http_title": self.http_title,
             "services": self.services, "open_ports": self.open_ports,
             "interface": self.interface, "via": self.via,
             "tags": self.tags, "randomized_mac": self.randomized_mac,
+            "ever_seen": self.ever_seen,
             "first_seen": self.first_seen, "last_seen": self.last_seen,
         }

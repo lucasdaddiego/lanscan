@@ -27,7 +27,7 @@ from textual.theme import Theme
 from textual.widgets import DataTable, Footer, Header, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
-from . import launch, net, ports
+from . import history, launch, net, ports
 from .engine import scan
 from .models import Device
 
@@ -241,6 +241,7 @@ class LanScanApp(App):
         self._fullscan_worker = None
         self._selected_ip: str | None = None
         self._mdns = None
+        self._history: dict[str, dict] | None = None  # persisted across runs (None = off)
         self._ifaces: list = []
         self._devices: list[Device] = []
         self._first_seen: dict[str, float] = {}
@@ -271,6 +272,8 @@ class LanScanApp(App):
         self.register_theme(THEME)
         self.theme = "lanscan"
         ports.raise_fd_limit()
+        if not self.args.no_history:
+            self._history = history.load()
         if not self.args.no_mdns:
             try:
                 from .discovery import MdnsDiscovery
@@ -298,6 +301,8 @@ class LanScanApp(App):
     async def on_unmount(self) -> None:
         if self._mdns is not None:
             await self._mdns.stop()
+        if self._history is not None:
+            history.save(self._history)
 
     # ---- scanning -------------------------------------------------------
     def _trigger_scan(self) -> None:
@@ -314,7 +319,8 @@ class LanScanApp(App):
             self._update_status()
             devices = await scan(
                 self._ifaces, resolve=not self.args.no_resolve, mdns=self._mdns,
-                scan_ports=self._ports, timeout=self.args.timeout,
+                ssdp_enabled=not self.args.no_ssdp, scan_ports=self._ports,
+                http_id=not self.args.no_http, timeout=self.args.timeout,
                 progress=self._on_progress)
             self._apply(devices)
         except asyncio.CancelledError:
@@ -335,11 +341,16 @@ class LanScanApp(App):
 
     def _apply(self, devices: list[Device]) -> None:
         current = {d.ip for d in devices}
-        for d in devices:
-            if d.ip in self._first_seen:
-                d.first_seen = self._first_seen[d.ip]
-            else:
-                self._first_seen[d.ip] = d.first_seen
+        if self._history is not None:
+            # Persisted history owns first_seen/ever_seen and survives restarts.
+            history.merge(self._history, devices)
+            history.save(self._history)
+        else:
+            for d in devices:
+                if d.ip in self._first_seen:
+                    d.first_seen = self._first_seen[d.ip]
+                else:
+                    self._first_seen[d.ip] = d.first_seen
         self._new = (current - self._known) if self._scanned_once else set()
         self._known |= current
         for d in devices:  # keep any on-demand full-scan results across refreshes
@@ -447,8 +458,10 @@ class LanScanApp(App):
         return (
             dev.ip, dev.name, dev.mdns_name, dev.hostname, dev.vendor, dev.mac,
             dev.randomized_mac, dev.interface, dev.via, dev.is_gateway, dev.is_self,
+            dev.upnp_name, dev.upnp_model, dev.http_server, dev.http_title,
             tuple(dev.open_ports), tuple(dev.services),
-            dev.ip in self._new, dev.ip in self._full_ports, fs, int(dev.last_seen),
+            dev.ip in self._new, dev.ip in self._full_ports,
+            dev.ever_seen, int(dev.first_seen), int(dev.last_seen), fs,
         )
 
     def _refresh_detail(self, *, force: bool = False) -> None:
@@ -514,8 +527,12 @@ class LanScanApp(App):
         ident.add_row("Name", _val(dev.name))
         if dev.mdns_name:
             ident.add_row("mDNS", Text(dev.mdns_name))
+        if dev.upnp_name:
+            ident.add_row("UPnP", Text(dev.upnp_name))
         if dev.hostname:
             ident.add_row("Host", Text(dev.hostname.rstrip(".")))
+        if dev.http_title:
+            ident.add_row("Web", Text(dev.http_title))
         if dev.vendor:
             ven = Text(dev.vendor)
         elif dev.randomized_mac:
@@ -523,6 +540,10 @@ class LanScanApp(App):
         else:
             ven = Text("unknown", style="dim")
         ident.add_row("Vendor", ven)
+        if dev.upnp_model:
+            ident.add_row("Model", Text(dev.upnp_model, style="dim"))
+        if dev.http_server:
+            ident.add_row("Server", Text(dev.http_server, style="dim"))
         blocks.append(section("IDENTITY", ident))
 
         # NETWORK
@@ -585,12 +606,19 @@ class LanScanApp(App):
 
         def ts(v):
             return time.strftime("%H:%M:%S", time.localtime(v)) if v else DASH
-        act.add_row("First", Text(ts(dev.first_seen)))
+        # Persisted history can put first-seen days ago, so show the date when it's old.
+        if dev.first_seen and time.time() - dev.first_seen >= 86400:
+            first_txt = time.strftime("%b %d %H:%M", time.localtime(dev.first_seen))
+        else:
+            first_txt = ts(dev.first_seen)
+        act.add_row("First", Text(first_txt))
         act.add_row("Last", Text(ts(dev.last_seen)))
         if dev.last_seen:
             age = max(0, int(time.time() - dev.last_seen))
             rel = f"{age}s ago" if age < 60 else f"{age // 60}m ago"
             act.add_row("Seen", Text(rel, style="dim"))
+        if dev.ever_seen:
+            act.add_row("History", Text("returning device", style="dim"))
         if is_new:
             act.add_row("New", Text("yes", style=PAL["ok"]))
         blocks.append(section("ACTIVITY", act))

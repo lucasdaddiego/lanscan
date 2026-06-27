@@ -1,6 +1,8 @@
 """Tests for lanscan.models — pure dataclasses and their derived properties."""
 from __future__ import annotations
 
+import pytest
+
 from lanscan.models import Device, Interface
 
 
@@ -11,18 +13,21 @@ def test_interface_label():
     assert iface.mac is None
 
 
-def test_device_name_prefers_mdns():
-    d = Device(ip="10.0.0.1", mdns_name="Living Room", hostname="host.local.")
-    assert d.name == "Living Room"
-
-
-def test_device_name_falls_back_to_hostname_stripping_dot():
-    d = Device(ip="10.0.0.1", hostname="printer.local.")
-    assert d.name == "printer.local"
-
-
-def test_device_name_empty_when_unknown():
-    assert Device(ip="10.0.0.1").name == ""
+@pytest.mark.parametrize("kwargs,expected", [
+    # mDNS wins over everything.
+    (dict(mdns_name="Living Room", upnp_name="x", hostname="h.local.", http_title="t"),
+     "Living Room"),
+    # UPnP friendlyName next.
+    (dict(upnp_name="Samsung TV", hostname="h.local.", http_title="t"), "Samsung TV"),
+    # Reverse-DNS hostname (trailing dot stripped) next.
+    (dict(hostname="printer.local.", http_title="t"), "printer.local"),
+    # HTTP <title> is the last resort for otherwise-unknown kit.
+    (dict(http_title="My NAS"), "My NAS"),
+    # Nothing known.
+    (dict(), ""),
+])
+def test_device_name_priority(kwargs, expected):
+    assert Device(ip="10.0.0.1", **kwargs).name == expected
 
 
 def test_device_tags_router_and_self():
@@ -50,15 +55,18 @@ def test_devices_sort_by_ip():
 def test_as_dict_round_trips_fields():
     d = Device(
         ip="10.0.0.5", interface="en0", mac="AA:BB:CC:DD:EE:FF", vendor="Acme",
-        hostname="box.local.", mdns_name="Box", services=["SSH"], open_ports=[22, 80],
-        is_self=True, is_gateway=False, randomized_mac=True, via="icmp",
-        first_seen=1.0, last_seen=2.0,
+        hostname="box.local.", mdns_name="Box", upnp_name="Box UPnP",
+        upnp_model="AcmeCorp NAS-9000", http_server="nginx", http_title="Box Admin",
+        services=["SSH"], open_ports=[22, 80], is_self=True, is_gateway=False,
+        randomized_mac=True, via="icmp", ever_seen=True, first_seen=1.0, last_seen=2.0,
     )
     out = d.as_dict()
     assert out == {
         "ip": "10.0.0.5", "mac": "AA:BB:CC:DD:EE:FF", "vendor": "Acme",
         "name": "Box", "hostname": "box.local.", "mdns_name": "Box",
+        "upnp_name": "Box UPnP", "upnp_model": "AcmeCorp NAS-9000",
+        "http_server": "nginx", "http_title": "Box Admin",
         "services": ["SSH"], "open_ports": [22, 80], "interface": "en0",
         "via": "icmp", "tags": ["self"], "randomized_mac": True,
-        "first_seen": 1.0, "last_seen": 2.0,
+        "ever_seen": True, "first_seen": 1.0, "last_seen": 2.0,
     }

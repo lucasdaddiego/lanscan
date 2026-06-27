@@ -27,6 +27,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="skip mDNS/Bonjour device identification")
     p.add_argument("--no-ports", action="store_true",
                    help="skip the per-device open-port scan")
+    p.add_argument("--no-ssdp", action="store_true",
+                   help="skip SSDP/UPnP device identification")
+    p.add_argument("--no-http", action="store_true",
+                   help="skip HTTP-banner device identification")
+    p.add_argument("--no-history", action="store_true",
+                   help="don't persist device history across runs")
     p.add_argument("--timeout", type=float, default=1.0, metavar="SECS",
                    help="per-host probe timeout (default: 1.0)")
     p.add_argument("--interval", type=float, default=30.0, metavar="SECS",

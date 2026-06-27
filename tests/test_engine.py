@@ -203,10 +203,21 @@ class FakeMdns:
 
 
 def _install_scan_mocks(monkeypatch, *, targets, alive_icmp, arp_seq, tcp_alive,
-                        gateway="192.168.0.1", broadcasts=()):
+                        gateway="192.168.0.1", broadcasts=(), ssdp_snap=None,
+                        http_map=None):
     monkeypatch.setattr(engine.net, "hosts_for", lambda ifaces: dict(targets))
     monkeypatch.setattr(engine.net, "default_gateway", lambda: gateway)
     monkeypatch.setattr(engine.net, "broadcast_set", lambda ifaces: set(broadcasts))
+
+    async def fake_ssdp_probe(timeout=2.0, **kw):
+        return dict(ssdp_snap or {})
+
+    monkeypatch.setattr(engine.ssdp, "probe", fake_ssdp_probe)
+
+    async def fake_identify(ip, open_ports, **kw):
+        return (http_map or {}).get(ip, (None, None))
+
+    monkeypatch.setattr(engine.banners, "identify", fake_identify)
 
     async def fake_ping(ip, timeout, sem):
         return (ip, ip in alive_icmp)
@@ -250,6 +261,15 @@ async def test_scan_full(monkeypatch):
         "192.168.0.2": ("12:bb:cc:dd:ee:f2", "en0"),  # locally-administered -> randomized
     }
     arp_after_tcp = dict(arp_first, **{"192.168.0.3": ("a0:bb:cc:dd:ee:f3", "en0")})
+    ssdp_snap = {
+        "192.168.0.1": {"name": "My Router", "model": "Acme RT-1",
+                        "server": "Linux UPnP/1.0"},
+        "192.168.0.2": {"name": None, "model": None, "server": "Roku UPnP/1.0"},
+    }
+    http_map = {
+        "192.168.0.1": ("nginx", "Router Admin"),
+        "192.168.0.3": (None, "Cam"),
+    }
     _install_scan_mocks(
         monkeypatch,
         targets=targets,
@@ -257,6 +277,8 @@ async def test_scan_full(monkeypatch):
         arp_seq=[arp_first, arp_after_tcp],
         tcp_alive={"192.168.0.3"},
         broadcasts={"192.168.0.255"},
+        ssdp_snap=ssdp_snap,
+        http_map=http_map,
     )
     progress = []
     devices = await engine.scan(
@@ -276,10 +298,18 @@ async def test_scan_full(monkeypatch):
     assert router.mdns_name == "Router"
     assert router.services == ["HTTP", "SSH"]
     assert router.open_ports == [80]
+    assert router.upnp_name == "My Router"
+    assert router.upnp_model == "Acme RT-1"
+    assert router.http_server == "nginx"
+    assert router.http_title == "Router Admin"
 
     assert by_ip["192.168.0.2"].via == "arp"
     assert by_ip["192.168.0.2"].randomized_mac is True
+    assert by_ip["192.168.0.2"].upnp_name is None
+    assert by_ip["192.168.0.2"].upnp_model == "Roku UPnP/1.0"   # SERVER fallback
     assert by_ip["192.168.0.3"].via == "tcp"
+    assert by_ip["192.168.0.3"].http_server is None
+    assert by_ip["192.168.0.3"].http_title == "Cam"
 
     me = by_ip["192.168.0.10"]
     assert me.is_self is True
@@ -301,12 +331,15 @@ async def test_scan_flags_off_and_no_tcp_hit(monkeypatch):
         gateway=None,
     )
     devices = await engine.scan([_iface()], resolve=False, mdns=None,
-                                scan_ports=False, timeout=0.1, progress=None)
+                                ssdp_enabled=False, scan_ports=False, http_id=False,
+                                timeout=0.1, progress=None)
     assert [d.ip for d in devices] == ["192.168.0.10"]
     me = devices[0]
     assert me.hostname is None        # resolve off
     assert me.services == []          # mdns off
     assert me.open_ports == []        # ports off
+    assert me.upnp_name is None       # ssdp off
+    assert me.http_server is None     # http banner off
 
 
 async def test_scan_skips_tcp_when_nothing_missing(monkeypatch):

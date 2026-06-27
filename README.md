@@ -25,8 +25,8 @@ the TUI to export the current device list to a timestamped `lanscan-*.json` in
 the working directory.
 
 Useful flags: `--interface en0`, `--kind wifi|ethernet`, `--no-resolve`
-(skip reverse DNS), `--no-mdns`, `--no-ports`, `--timeout 1.0`, `--interval 30`,
-`--update-vendors`.
+(skip reverse DNS), `--no-mdns`, `--no-ssdp`, `--no-ports`, `--no-http`,
+`--no-history`, `--timeout 1.0`, `--interval 30`, `--update-vendors`.
 
 ### Keys (TUI)
 
@@ -55,9 +55,14 @@ clickable, so `e` doubles as an on-screen export button.
    /22 are skipped — the status bar flags them). Every reachable host must answer
    ARP, so reading the ARP table afterwards yields IP↔MAC for all of them. A light
    TCP-connect probe mops up the rare hosts that ignore ICMP.
-3. **Identify** — reverse DNS for hostnames; mDNS/Bonjour (`zeroconf`) for
-   friendly names and advertised services (AirPlay, Chromecast, printers, SSH…);
-   OUI lookup for the hardware vendor.
+3. **Identify** — several independent sources, merged best-name-first:
+   mDNS/Bonjour (`zeroconf`) friendly names and advertised services (AirPlay,
+   Chromecast, printers, SSH…); **SSDP/UPnP** (an `M-SEARCH` burst) for the
+   `friendlyName` + manufacturer/model of smart TVs, media renderers, routers and
+   IoT (`--no-ssdp`); reverse DNS for hostnames; an **HTTP-banner** probe of each
+   device's best open web port — the `Server` header and page `<title>` — to name
+   routers/NAS/cameras/printers that nothing else does (`--no-http`); and OUI
+   lookup for the hardware vendor.
 4. **Ports** — a TCP connect scan of a curated ~50 common LAN/IoT/media/dev/admin
    ports per device (a port counts as open only when the handshake completes; no
    root). Curated rather than a full 1–65535 sweep on purpose: a full sweep is
@@ -68,6 +73,10 @@ clickable, so `e` doubles as an on-screen export button.
    protection, shows progress, merges into the curated result, and is cancellable
    (press `f` again). Robust hosts finish in seconds; hosts that drop closed ports
    can take minutes.
+5. **History** — every device is remembered across runs in a small JSON file
+   under your user data dir (keyed by MAC, IP as fallback), so "first seen"
+   survives restarts and a device that's genuinely new to the network is told
+   apart from one that's merely new this session. Disable with `--no-history`.
 
 Randomised/private MACs (the locally-administered bit — common on modern phones)
 are labelled as such rather than guessed.
@@ -99,13 +108,15 @@ The package is split so new capabilities slot in cleanly:
 - `net.py` — interface discovery & subnet math
 - `engine.py` — the async liveness sweep + ARP/DNS/vendor merge
 - `discovery.py` — mDNS/Bonjour (add service types to `_LABELS`)
+- `ssdp.py` — SSDP/UPnP M-SEARCH + description parsing
+- `banners.py` — HTTP `Server`/`<title>` identification
+- `history.py` — persistent device history (JSON in the user data dir)
 - `vendors.py` — MAC → vendor
 - `tui.py` — the Textual app
 - `models.py` — the `Device` / `Interface` records
 
-Natural next steps: HTTP-banner identification (use open web ports to name
-unknown devices), SSDP/UPnP discovery, persistent device history across runs, or
-alerts when an unknown device joins.
+Natural next steps: SSDP banner enrichment for more device types, alerts when an
+unknown device joins, or exporting history to a timeline.
 
 ## Development
 
