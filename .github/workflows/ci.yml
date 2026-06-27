@@ -19,7 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8
+      # setup-uv publishes no floating major tag (no `v8`), so pin the exact release.
+      - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
       # Pinned so a new ruff release can't turn CI red without a deliberate bump.
@@ -36,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
 
