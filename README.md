@@ -1,6 +1,10 @@
 # lanscan
 
 [![CI](https://github.com/lucasdaddiego/lanscan/actions/workflows/ci.yml/badge.svg)](https://github.com/lucasdaddiego/lanscan/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](https://github.com/lucasdaddiego/lanscan/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.14-blue.svg)
+![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
 
 Discover the devices connected to your local network — a live terminal UI with a
 **master/detail** split: a compact device list on the left, and full per-device
