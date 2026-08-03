@@ -20,11 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # setup-uv publishes no floating major tag (no `v8`), so pin the exact release.
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       # Pinned so a new ruff release can't turn CI red without a deliberate bump.
-      - run: uvx ruff@0.15.20 check .
+      - run: uvx ruff@0.16.1 check .
 
   test:
     name: test (${{ matrix.os }})
@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
