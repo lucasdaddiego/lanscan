@@ -69,13 +69,20 @@ def _xml_tag(xml: bytes, tag: str) -> str | None:
     return text or None
 
 
-async def _enrich(info: dict, *, timeout: float) -> None:
-    """Fetch the device description at LOCATION and fill in name / model."""
+async def _enrich(ip: str, info: dict, *, timeout: float) -> None:
+    """Fetch the device description at LOCATION and fill in name / model.
+
+    ``ip`` is the host that actually sent the reply, and we only follow a
+    LOCATION whose host is that same literal address. A reply is unauthenticated
+    UDP from anyone on the LAN, so an unchecked LOCATION would let a rogue
+    responder both point us at an arbitrary host/port of its choosing and claim
+    another device's identity by citing that device's description URL.
+    """
     loc = info.get("location")
     if not loc:
         return
     parsed = urlparse(loc)
-    if not parsed.hostname:
+    if parsed.hostname != ip:       # missing, a name, or someone else's address
         return
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     path = parsed.path or "/"
@@ -113,6 +120,6 @@ async def probe(timeout: float = 2.0, *, fetch_details: bool = True) -> dict[str
     }
     if fetch_details and result:
         await asyncio.gather(
-            *(_enrich(info, timeout=timeout) for info in result.values()),
+            *(_enrich(ip, info, timeout=timeout) for ip, info in result.items()),
             return_exceptions=True)
     return result

@@ -50,14 +50,40 @@ def test_xml_tag():
 # ---- _enrich --------------------------------------------------------------
 async def test_enrich_no_location():
     info = {"location": None}
-    await ssdp._enrich(info, timeout=0)
+    await ssdp._enrich("192.168.1.1", info, timeout=0)
     assert "name" not in info
 
 
 async def test_enrich_bad_url():
     info = {"location": "no-scheme-no-host"}
-    await ssdp._enrich(info, timeout=0)
+    await ssdp._enrich("192.168.1.1", info, timeout=0)
     assert "name" not in info
+
+
+async def test_enrich_refuses_a_location_pointing_at_another_host(monkeypatch):
+    """An SSDP reply is unauthenticated UDP: a rogue responder must not be able
+    to aim our GET at a host it doesn't own (here a loopback-only admin UI)."""
+    async def must_not_run(*a, **k):
+        raise AssertionError("fetch must not be called for a foreign LOCATION")
+
+    monkeypatch.setattr(ssdp.banners, "fetch", must_not_run)
+    info = {"location": "http://127.0.0.1:8080/admin/reboot?confirm=1"}
+    await ssdp._enrich("192.168.0.66", info, timeout=1.0)
+    assert "name" not in info
+
+
+async def test_enrich_refuses_a_hostname_that_is_not_the_responder_literal(monkeypatch):
+    """Same check catches the identity-spoof shape: citing the router's own
+    description URL so the rogue host inherits the router's name."""
+    async def must_not_run(*a, **k):
+        raise AssertionError("fetch must not be called for a foreign LOCATION")
+
+    monkeypatch.setattr(ssdp.banners, "fetch", must_not_run)
+    for loc in ("http://192.168.0.1/desc.xml",      # a neighbour's address
+                "http://router.local/desc.xml"):    # a name, not the literal
+        info = {"location": loc}
+        await ssdp._enrich("192.168.0.66", info, timeout=1.0)
+        assert "name" not in info
 
 
 async def test_enrich_fetch_fails(monkeypatch):
@@ -66,7 +92,7 @@ async def test_enrich_fetch_fails(monkeypatch):
 
     monkeypatch.setattr(ssdp.banners, "fetch", fake_fetch)
     info = {"location": "http://192.168.1.1:8060/dd.xml"}
-    await ssdp._enrich(info, timeout=0)
+    await ssdp._enrich("192.168.1.1", info, timeout=0)
     assert "name" not in info
 
 
@@ -80,7 +106,7 @@ async def test_enrich_success_https_with_query(monkeypatch):
 
     monkeypatch.setattr(ssdp.banners, "fetch", fake_fetch)
     info = {"location": "https://192.168.1.2:8443/desc.xml?v=1"}
-    await ssdp._enrich(info, timeout=1.0)
+    await ssdp._enrich("192.168.1.2", info, timeout=1.0)
     assert info["name"] == "My TV"
     assert info["model"] == "Acme X1"
     assert cap == {"host": "192.168.1.2", "port": 8443, "path": "/desc.xml?v=1", "tls": True}
@@ -95,7 +121,7 @@ async def test_enrich_default_http_port_empty_path(monkeypatch):
 
     monkeypatch.setattr(ssdp.banners, "fetch", fake_fetch)
     info = {"location": "http://192.168.1.3"}   # no port, no path
-    await ssdp._enrich(info, timeout=0)
+    await ssdp._enrich("192.168.1.3", info, timeout=0)
     assert cap["port"] == 80 and cap["path"] == "/" and cap["tls"] is False
     assert info["name"] is None                 # no friendlyName
     assert info["model"] == "OnlyModel"         # manufacturer absent
@@ -107,7 +133,7 @@ async def test_enrich_name_only_model_none(monkeypatch):
 
     monkeypatch.setattr(ssdp.banners, "fetch", fake_fetch)
     info = {"location": "http://192.168.1.4:80/d.xml"}
-    await ssdp._enrich(info, timeout=0)
+    await ssdp._enrich("192.168.1.4", info, timeout=0)
     assert info["name"] == "Bare"
     assert info["model"] is None                # neither manufacturer nor model
 
@@ -171,6 +197,29 @@ async def test_probe_collects_and_enriches(monkeypatch):
     assert result["192.168.1.1"]["model"] == "Acme X9"
     assert result["192.168.1.50"]["server"] == "Roku UPnP/1.0"
     assert result["192.168.1.50"]["name"] is None
+
+
+async def test_probe_does_not_attribute_a_foreign_location_to_the_responder(monkeypatch):
+    """End to end: the rogue host stays anonymous and only the honest device,
+    whose LOCATION points back at itself, gets enriched."""
+    responses = {
+        "192.168.0.66": {"server": "rogue/1.0",           # claims the router's URL
+                         "location": "http://192.168.0.1:80/desc.xml"},
+        "192.168.0.1": {"server": "Linux UPnP/1.0",
+                        "location": "http://192.168.0.1:80/desc.xml"},
+    }
+    _patch_endpoint(monkeypatch, responses=responses)
+    fetched = []
+
+    async def fake_fetch(host, port, path="/", **kw):
+        fetched.append(host)
+        return 200, {}, b"<friendlyName>Corporate Router</friendlyName>"
+
+    monkeypatch.setattr(ssdp.banners, "fetch", fake_fetch)
+    result = await ssdp.probe(timeout=0)
+    assert result["192.168.0.66"]["name"] is None        # not the router
+    assert result["192.168.0.1"]["name"] == "Corporate Router"
+    assert fetched == ["192.168.0.1"]                    # exactly one GET, to itself
 
 
 async def test_probe_without_details(monkeypatch):

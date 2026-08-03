@@ -13,14 +13,40 @@ from lanscan import banners
 
 
 class FakeReader:
-    def __init__(self, data=b"", read_exc=None):
-        self._data = data
+    """Stands in for asyncio.StreamReader: hands out each queued chunk in turn,
+    then b"" for EOF — which is how a real reader signals "that was the whole
+    response" as opposed to "one write's worth so far"."""
+
+    def __init__(self, data=b"", read_exc=None, chunks=None):
+        self._chunks = list(chunks) if chunks is not None else [data]
         self._exc = read_exc
+        self.reads = 0
 
     async def read(self, n):
         if self._exc:
             raise self._exc
-        return self._data[:n]
+        self.reads += 1
+        if not self._chunks:
+            return b""
+        chunk = self._chunks.pop(0)
+        if len(chunk) > n:                  # a real read() never overruns the cap
+            self._chunks.insert(0, chunk[n:])
+            chunk = chunk[:n]
+        return chunk
+
+
+class StallingReader:
+    """Flushes one segment, then goes quiet without ever closing the socket."""
+
+    def __init__(self, first):
+        self._first = first
+        self._sent = False
+
+    async def read(self, n):
+        if self._sent:
+            await asyncio.sleep(3600)       # only the deadline gets us out
+        self._sent = True
+        return self._first
 
 
 class FakeWriter:
@@ -122,6 +148,42 @@ async def test_fetch_ok(monkeypatch):
     assert headers["server"] == "nginx/1.21"
     assert writer.closed is True
     assert b"GET / HTTP/1.0" in writer.written
+
+
+async def test_fetch_reads_body_that_arrives_after_the_headers(monkeypatch):
+    """A server that flushes headers and body as separate writes still yields a
+    title — one read() would return only the headers and lose the whole body."""
+    reader = FakeReader(chunks=[
+        b"HTTP/1.1 200 OK\r\nServer: acme-httpd/1.0\r\n\r\n",
+        b"<html><head><title>Acme Router Admin</title></head></html>",
+    ])
+    _patch_conn(monkeypatch, reader=reader, writer=FakeWriter())
+    status, headers, body = await banners.fetch("1.2.3.4", 80)
+    assert status == 200
+    assert headers["server"] == "acme-httpd/1.0"
+    assert banners._title(body) == "Acme Router Admin"
+    assert reader.reads == 3                # headers, body, EOF
+
+
+async def test_fetch_stops_at_max_bytes(monkeypatch):
+    """The byte cap ends the read loop without waiting for EOF."""
+    head = b"HTTP/1.1 200 OK\r\n\r\n<title>Small</title>"
+    reader = FakeReader(chunks=[head, b"<title>NEVER READ</title>"])
+    _patch_conn(monkeypatch, reader=reader, writer=FakeWriter())
+    _status, _headers, body = await banners.fetch("1.2.3.4", 80, max_bytes=len(head))
+    assert banners._title(body) == "Small"
+    assert b"NEVER READ" not in body
+    assert reader.reads == 1                # capped, so no second read
+
+
+async def test_fetch_keeps_headers_when_the_body_never_arrives(monkeypatch):
+    """A device that stalls after its headers still gives up a Server banner."""
+    _patch_conn(monkeypatch, writer=FakeWriter(),
+                reader=StallingReader(b"HTTP/1.1 200 OK\r\nServer: stalled/1.0\r\n\r\n"))
+    status, headers, body = await banners.fetch("1.2.3.4", 80, timeout=0.05)
+    assert status == 200
+    assert headers["server"] == "stalled/1.0"
+    assert body == b""
 
 
 async def test_fetch_connect_error(monkeypatch):

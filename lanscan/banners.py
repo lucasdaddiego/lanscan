@@ -39,6 +39,7 @@ async def fetch(host: str, port: int, path: str = "/", *, tls: bool = False,
                 timeout: float = 2.0, max_bytes: int = 65536):
     """One HTTP/1.0 GET. Returns (status, headers, body) or None on any failure."""
     ctx = _tls_context() if tls else None
+    loop = asyncio.get_running_loop()
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port, ssl=ctx), timeout=timeout)
@@ -49,7 +50,26 @@ async def fetch(host: str, port: int, path: str = "/", *, tls: bool = False,
                "User-Agent: lanscan\r\nConnection: close\r\nAccept: */*\r\n\r\n")
         writer.write(req.encode("latin-1", "replace"))
         await asyncio.wait_for(writer.drain(), timeout=timeout)
-        raw = await asyncio.wait_for(reader.read(max_bytes), timeout=timeout)
+        # One read() returns as soon as *any* byte is buffered, so a server that
+        # flushes its headers separately from its body would hand us headers and
+        # no body. Keep reading until EOF or the cap, under one overall deadline;
+        # if the deadline hits mid-response we keep what did arrive (headers are
+        # still a usable banner) rather than throwing the whole response away.
+        deadline = loop.time() + timeout
+        chunks: list[bytes] = []
+        size = 0
+        while size < max_bytes:
+            try:
+                chunk = await asyncio.wait_for(
+                    reader.read(max_bytes - size),
+                    timeout=max(0.0, deadline - loop.time()))
+            except asyncio.TimeoutError:
+                break
+            if not chunk:                       # EOF
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        raw = b"".join(chunks)
     except (asyncio.TimeoutError, OSError):
         return None
     finally:
