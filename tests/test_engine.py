@@ -28,11 +28,15 @@ class FakeWriter:
 
 class FakeProc:
     """Stand-in for an asyncio subprocess; `hang` makes the first wait() block."""
-    def __init__(self, rc=0):
+    def __init__(self, rc=0, hang=False):
         self.rc = rc
         self.killed = False
+        self._hang = hang
 
     async def wait(self):
+        if self._hang:
+            self._hang = False
+            await asyncio.sleep(3600)
         return self.rc
 
     def kill(self):
@@ -76,6 +80,31 @@ async def test_ping_timeout_kills_proc(monkeypatch):
     ip, ok = await engine._ping("10.0.0.9", 0.1, asyncio.Semaphore(2))
     assert (ip, ok) == ("10.0.0.9", False)
     assert proc.killed is True
+
+
+async def test_ping_cancel_kills_proc(monkeypatch):
+    proc = FakeProc(hang=True)
+    monkeypatch.setattr(engine.asyncio, "create_subprocess_exec", _exec_returning(proc))
+    task = asyncio.create_task(engine._ping("10.0.0.9", 30.0, asyncio.Semaphore(2)))
+    await asyncio.sleep(0.02)          # let it reach the proc.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert proc.killed is True         # child killed, not left running
+
+
+async def test_ping_cancel_tolerates_already_exited_proc(monkeypatch):
+    class GoneProc(FakeProc):
+        def kill(self):
+            raise ProcessLookupError  # exited between the cancel and the kill
+
+    proc = GoneProc(hang=True)
+    monkeypatch.setattr(engine.asyncio, "create_subprocess_exec", _exec_returning(proc))
+    task = asyncio.create_task(engine._ping("10.0.0.9", 30.0, asyncio.Semaphore(2)))
+    await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task                     # ProcessLookupError must not mask the cancel
 
 
 # ---- _port_up -------------------------------------------------------------
@@ -384,6 +413,36 @@ async def test_scan_flags_off_and_no_tcp_hit(monkeypatch):
     assert me.open_ports == []        # ports off
     assert me.upnp_name is None       # ssdp off
     assert me.http_server is None     # http banner off
+
+
+async def test_scan_cancel_stops_the_ping_sweep(monkeypatch):
+    # Quitting the TUI mid-sweep cancels scan(); as_completed does not cancel the
+    # tasks it consumes, so without explicit ownership the whole sweep keeps running.
+    started = []
+
+    async def slow_ping(ip, timeout, sem):
+        started.append(ip)
+        await asyncio.sleep(30)
+        return ip, False
+
+    _install_scan_mocks(
+        monkeypatch,
+        targets={f"192.168.0.{n}": "en0" for n in (1, 2, 3, 4, 5)},
+        alive_icmp=set(), arp_seq=[{}], tcp_alive=set(),
+    )
+    monkeypatch.setattr(engine, "_ping", slow_ping)   # after the mocks, which set it too
+    task = asyncio.create_task(engine.scan(
+        [_iface()], resolve=False, mdns=None, ssdp_enabled=False,
+        scan_ports=False, http_id=False, timeout=0.1))
+    for _ in range(100):
+        if len(started) == 5:
+            break
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0)
+    assert [t for t in asyncio.all_tasks() if t.get_coro().__name__ == "slow_ping"] == []
 
 
 async def test_scan_skips_tcp_when_nothing_missing(monkeypatch):

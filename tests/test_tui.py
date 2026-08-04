@@ -473,6 +473,79 @@ async def test_cycle_kind(monkeypatch):
         assert app._scanned_once is True
 
 
+async def test_cycle_kind_while_scanning_rescans_the_new_scope(monkeypatch):
+    # A scope change mid-scan: the in-flight run's results describe the *old* scope,
+    # so they must be dropped and a rescan issued — action_cycle_kind's own
+    # _trigger_scan() is swallowed by the `_scanning` guard.
+    gate = asyncio.Event()
+    kinds = []
+
+    def fake_discover(only_kind=None, **kw):
+        kinds.append(only_kind)
+        return []
+
+    async def fake_scan(interfaces, **kw):
+        if not gate.is_set():
+            await gate.wait()
+            return [Device(ip="10.0.0.7", interface="en1")]    # ethernet host
+        return [Device(ip="192.168.0.9", interface="en0")]     # wi-fi host
+
+    monkeypatch.setattr(tui, "scan", fake_scan)
+    monkeypatch.setattr(tui.net, "discover_interfaces", fake_discover)
+    app = LanScanApp(make_args())
+    # Neuter on_mount's one-shot 1.2s warm-up timer: left alone it fires mid-test
+    # and rescans anyway, masking the missing re-trigger this test is about.
+    monkeypatch.setattr(app, "set_timer", lambda *a, **kw: None)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_rescan()
+        await pilot.pause()
+        assert app._scanning is True
+        app.action_cycle_kind()          # -> "wifi" while the all-scope scan runs
+        gate.set()
+        for _ in range(200):
+            await pilot.pause()
+            if not app._scanning and len(kinds) > 1:
+                break
+        assert kinds == [None, "wifi"]                            # rescanned, new scope
+        assert [d.ip for d in app._devices] == ["192.168.0.9"]    # old-scope rows dropped
+
+
+async def test_cycle_kind_then_cancel_does_not_start_a_new_scan(monkeypatch):
+    # Same scope change, but the worker is cancelled instead of finishing. `finally`
+    # still runs, and re-triggering from there would start a full sweep that outlives
+    # teardown — workers.cancel_all() does not await App-level workers, so it would
+    # race on_unmount's mdns.stop()/history.save(). Cancellation must suppress it.
+    gate = asyncio.Event()
+    kinds = []
+
+    def fake_discover(only_kind=None, **kw):
+        kinds.append(only_kind)
+        return []
+
+    async def fake_scan(interfaces, **kw):
+        await gate.wait()          # never released: this run only ever gets cancelled
+        return []
+
+    monkeypatch.setattr(tui, "scan", fake_scan)
+    monkeypatch.setattr(tui.net, "discover_interfaces", fake_discover)
+    app = LanScanApp(make_args())
+    monkeypatch.setattr(app, "set_timer", lambda *a, **kw: None)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_rescan()
+        await pilot.pause()
+        assert app._scanning is True
+        app.action_cycle_kind()        # -> "wifi" while the all-scope scan runs
+        app.workers.cancel_all()       # what quitting does
+        for _ in range(200):
+            await pilot.pause()
+            if not app._scanning:
+                break
+        assert kinds == [None]         # no second scan was started
+        assert app._scanning is False
+
+
 async def test_scroll_detail(monkeypatch):
     app = make_app(monkeypatch, devices=[Device(ip="192.168.0.1")])
     async with app.run_test() as pilot:
@@ -854,6 +927,23 @@ async def test_history_lifecycle(monkeypatch):
         assert dev.ever_seen is True
         assert saves                             # persisted during _apply
     assert len(saves) >= 2                       # also saved on unmount
+
+
+async def test_history_pruned_to_cap_on_apply(monkeypatch):
+    # merge() prunes by returning a new map; _apply must adopt it, or history.json
+    # grows past MAX_RECORDS forever (every randomised phone MAC is a fresh key).
+    monkeypatch.setattr(tui.history, "MAX_RECORDS", 2)
+    loaded = {"OLD": {"last_seen": 1.0}, "MID": {"last_seen": 2.0}}
+    saves = []
+    monkeypatch.setattr(tui.history, "load", lambda: dict(loaded))
+    monkeypatch.setattr(tui.history, "save", lambda recs: saves.append(dict(recs)))
+    app = make_app(monkeypatch, devices=[Device(ip="192.168.0.5", mac="NEW")],
+                   no_history=False)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_scan(app, pilot)
+        assert set(app._history) == {"MID", "NEW"}   # oldest record dropped
+        assert set(saves[-1]) == {"MID", "NEW"}      # and that's what got written
 
 
 async def _empty_scan(interfaces, **kw):

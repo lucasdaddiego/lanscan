@@ -9,6 +9,7 @@ merged on top.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import re
 import socket
@@ -60,6 +61,11 @@ async def _ping(ip: str, timeout: float, sem: asyncio.Semaphore) -> tuple[str, b
             proc.kill()
             await proc.wait()
             return ip, False
+        except asyncio.CancelledError:
+            # The sweep was abandoned (TUI quit): don't leave the child behind.
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            raise
         return ip, rc == 0
 
 
@@ -175,13 +181,22 @@ async def scan(
     total, done = len(sweep), 0
     if progress:
         progress(0, total)
-    for coro in asyncio.as_completed([_ping(ip, timeout, ping_sem) for ip in sweep]):
-        ip, ok = await coro
-        if ok:
-            alive_icmp.add(ip)
-        done += 1
-        if progress:
-            progress(done, total)
+    # Own the tasks explicitly (same pattern as _tcp_alive): as_completed does not
+    # cancel what it started, so a cancelled scan would leave the whole sweep —
+    # and its ping children — running behind it.
+    pings = [asyncio.create_task(_ping(ip, timeout, ping_sem)) for ip in sweep]
+    try:
+        for coro in asyncio.as_completed(pings):
+            ip, ok = await coro
+            if ok:
+                alive_icmp.add(ip)
+            done += 1
+            if progress:
+                progress(done, total)
+    finally:
+        for t in pings:
+            t.cancel()
+        await asyncio.gather(*pings, return_exceptions=True)
 
     arp = read_arp(targets)
 

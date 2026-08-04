@@ -313,17 +313,21 @@ class LanScanApp(App):
 
     @work(exclusive=True, group="scan")
     async def _run_scan(self) -> None:
+        kind = self._kind  # the scope this run was started for
+        cancelled = False
         try:
             self._ifaces = net.discover_interfaces(
-                only_device=self.args.interface, only_kind=self._kind)
+                only_device=self.args.interface, only_kind=kind)
             self._update_status()
             devices = await scan(
                 self._ifaces, resolve=not self.args.no_resolve, mdns=self._mdns,
                 ssdp_enabled=not self.args.no_ssdp, scan_ports=self._ports,
                 http_id=not self.args.no_http, timeout=self.args.timeout,
                 progress=self._on_progress)
-            self._apply(devices)
+            if self._kind == kind:  # scope unchanged → the results still describe it
+                self._apply(devices)
         except asyncio.CancelledError:
+            cancelled = True
             raise
         except Exception as exc:  # noqa: BLE001 - a scan error must not kill the TUI
             self.notify(f"Scan failed: {exc}", severity="error")
@@ -331,7 +335,21 @@ class LanScanApp(App):
             self._scanning = False
             self._progress = (0, 0)
             self._last_scan = time.time()
-            self._scanned_once = True
+            if self._kind == kind:
+                self._scanned_once = True
+            elif not cancelled:
+                # The scope changed while this scan was in flight, so its results
+                # were dropped — and the rescan action_cycle_kind asked for was
+                # swallowed by _trigger_scan's guard. Run it now.
+                #
+                # Not when we were cancelled, though: `finally` still runs on the way
+                # out, and a scan started from here outlives teardown. Textual's
+                # workers.cancel_all() does not await App-level workers, so quitting
+                # after a scope change would leave a full sweep (up to 128 ping
+                # children, SSDP, port scan) racing on_unmount's mdns.stop()/history
+                # .save(). Cancellation also covers an exclusive-worker replacement,
+                # where the incoming scan already supersedes this one.
+                self._trigger_scan()
             self._update_status()
 
     def _on_progress(self, done: int, total: int) -> None:
@@ -343,7 +361,9 @@ class LanScanApp(App):
         current = {d.ip for d in devices}
         if self._history is not None:
             # Persisted history owns first_seen/ever_seen and survives restarts.
-            history.merge(self._history, devices)
+            # merge() returns a *new* map when it prunes to MAX_RECORDS, so rebind
+            # rather than dropping the return value — otherwise the cap never bites.
+            self._history = history.merge(self._history, devices)
             history.save(self._history)
         else:
             for d in devices:

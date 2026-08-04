@@ -257,6 +257,30 @@ async def test_resolve_device_info_suppresses_instance(monkeypatch):
     assert snap["192.168.0.7"] == {"name": None, "services": {"device-info"}}
 
 
+async def test_resolve_again_releases_departed_ip(monkeypatch):
+    # The speaker takes a new DHCP lease, so an Updated event re-resolves the same
+    # instance at a different address. The address it left must be released — a
+    # sibling service type still advertising there keeps it, a bare move doesn't.
+    md = MdnsDiscovery()
+    md._azc = FakeAZC()
+    sonos, raop = "Kitchen._sonos._tcp.local.", "Kitchen._raop._tcp.local."
+    monkeypatch.setattr(discovery, "AsyncServiceInfo",
+                        _info_factory(_Info(properties={}, addresses=["192.168.0.41"])))
+    await md._resolve("_sonos._tcp.local.", sonos)
+    await md._resolve("_raop._tcp.local.", raop)
+    assert md.snapshot()["192.168.0.41"]["services"] == {"Sonos", "AirPlay-Audio"}
+
+    monkeypatch.setattr(discovery, "AsyncServiceInfo",
+                        _info_factory(_Info(properties={}, addresses=["192.168.0.55"])))
+    await md._resolve("_sonos._tcp.local.", sonos)
+    assert md.snapshot() == {
+        "192.168.0.41": {"name": "Kitchen", "services": {"AirPlay-Audio"}},  # raop only
+        "192.168.0.55": {"name": "Kitchen", "services": {"Sonos"}},
+    }
+    md._forget(raop)
+    assert set(md.snapshot()) == {"192.168.0.55"}   # nothing left claiming .41
+
+
 async def test_resolve_swallows_exceptions(monkeypatch):
     def boom(service_type, name):
         raise RuntimeError("zeroconf blew up")

@@ -127,6 +127,10 @@ class MdnsDiscovery:
             added = friendly if friendly else (
                 instance if (instance and label != "device-info") else None)
             ips = [a for a in info.parsed_addresses() if ":" not in a]  # IPv4 only
+            # An Updated event re-resolves an instance we may already know: drop the
+            # previous record first (rebuilding every IP it used to claim) so an
+            # address it has since left doesn't keep this name forever.
+            self._forget(name)
             # remember this instance's contribution so a Removed event can undo it
             self._by_name[name] = {"ips": set(ips), "label": label, "instance": added}
             for addr in ips:

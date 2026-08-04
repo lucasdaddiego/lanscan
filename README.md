@@ -68,8 +68,9 @@ clickable, so `e` doubles as an on-screen export button.
    `friendlyName` + manufacturer/model of smart TVs, media renderers, routers and
    IoT (`--no-ssdp`); reverse DNS for hostnames; an **HTTP-banner** probe of each
    device's best open web port — the `Server` header and page `<title>` — to name
-   routers/NAS/cameras/printers that nothing else does (`--no-http`); and OUI
-   lookup for the hardware vendor.
+   routers/NAS/cameras/printers that nothing else does (`--no-http`; it reads the
+   port scan's result, so `--no-ports` / the `o` toggle switches it off too); and
+   OUI lookup for the hardware vendor.
 4. **Ports** — a TCP connect scan of a curated ~50 common LAN/IoT/media/dev/admin
    ports per device (a port counts as open only when the handshake completes; no
    root). Curated rather than a full 1–65535 sweep on purpose: a full sweep is

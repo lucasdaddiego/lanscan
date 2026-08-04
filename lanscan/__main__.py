@@ -26,7 +26,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-mdns", action="store_true",
                    help="skip mDNS/Bonjour device identification")
     p.add_argument("--no-ports", action="store_true",
-                   help="skip the per-device open-port scan")
+                   help="skip the per-device open-port scan (also disables HTTP-banner "
+                        "identification, which needs a known-open web port)")
     p.add_argument("--no-ssdp", action="store_true",
                    help="skip SSDP/UPnP device identification")
     p.add_argument("--no-http", action="store_true",
