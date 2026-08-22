@@ -1,6 +1,4 @@
 """Tests for lanscan.vendors — MAC normalisation and OUI -> vendor lookup."""
-from __future__ import annotations
-
 import urllib.error
 
 import pytest
@@ -123,3 +121,19 @@ def test_update_manuf_failure(manuf_cache, monkeypatch):
     assert ok is False
     assert "URLError" in msg
     assert not manuf_cache.exists()
+
+
+async def test_preload_parses_once_off_loop(manuf_cache, monkeypatch):
+    manuf_cache.write_text("B8:27:EB\tRaspberry Pi\n")
+    calls = []
+    real = vendors._tables.__wrapped__
+
+    def counting():
+        calls.append(1)
+        return real()
+
+    monkeypatch.setattr(vendors, "_tables", vendors.lru_cache(maxsize=1)(counting))
+    await vendors.preload()
+    await vendors.preload()          # already cached -> no second parse
+    assert calls == [1]
+    assert vendors.lookup("B8:27:EB:00:00:01") == "Raspberry Pi"

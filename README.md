@@ -11,9 +11,10 @@ Discover the devices connected to your local network — a live terminal UI with
 detail on the right (MAC, vendor, hostname, the services each device advertises,
 and the TCP ports it has open). Works on your Wi-Fi and any plugged-in Ethernet.
 
-No root required, no `nmap`/`arp-scan` needed — it shells out to `ping` and the
-OS neighbour table (`arp` on macOS, `ip neigh` on Linux), and uses mDNS/Bonjour
-for identification. **macOS and Linux**; intended for networks you own or are
+No root required, no `nmap`/`arp-scan` needed — it sends ICMP echoes from an
+unprivileged socket (falling back to `ping` where the OS doesn't allow one), reads
+the OS neighbour table (`arp` on macOS, `ip neigh` on Linux), and uses
+mDNS/Bonjour for identification. **macOS and Linux**; intended for networks you own or are
 authorised to scan.
 
 ![lanscan — master/detail TUI](docs/screenshot.png)
@@ -58,13 +59,16 @@ clickable, so `e` doubles as an on-screen export button.
    OrbStack/Docker/VM networks (e.g. `192.168.97.0/24`) and their containers never
    get swept.
    Re-checked every cycle, so a plugged-in Ethernet adapter appears on its own.
-2. **Sweep** — a concurrent ICMP ping sweep of the subnet (subnets larger than a
-   /22 are skipped — the status bar flags them). Every reachable host must answer
-   ARP, so reading the ARP table afterwards yields IP↔MAC for all of them. A light
-   TCP-connect probe mops up the rare hosts that ignore ICMP.
+2. **Sweep** — an ICMP echo to every address in the subnet from one unprivileged
+   ICMP socket (subnets larger than a /22 are skipped — the status bar flags
+   them); where the OS refuses that socket (Linux without `ping_group_range`) it
+   spawns `ping` per host instead. The sweep's real job is forcing ARP: every
+   reachable host must answer it, ICMP-silent or not, so reading the neighbour
+   table afterwards yields IP↔MAC for all of them.
 3. **Identify** — several independent sources, merged best-name-first:
    mDNS/Bonjour (`zeroconf`) friendly names and advertised services (AirPlay,
-   Chromecast, printers, SSH…); **SSDP/UPnP** (an `M-SEARCH` burst) for the
+   Chromecast, printers, SSH…); **SSDP/UPnP** (an `M-SEARCH` out of every
+   scanned interface, sent twice) for the
    `friendlyName` + manufacturer/model of smart TVs, media renderers, routers and
    IoT (`--no-ssdp`); reverse DNS for hostnames; an **HTTP-banner** probe of each
    device's best open web port — the `Server` header and page `<title>` — to name
@@ -83,8 +87,10 @@ clickable, so `e` doubles as an on-screen export button.
    can take minutes.
 5. **History** — every device is remembered across runs in a small JSON file
    under your user data dir (keyed by MAC, IP as fallback), so "first seen"
-   survives restarts and a device that's genuinely new to the network is told
-   apart from one that's merely new this session. Disable with `--no-history`.
+   survives restarts, a device that's genuinely new to the network is told apart
+   from one that's merely new this session, and a device that's nameless this
+   run still shows its last known name (marked *last known*). `--no-history`
+   keeps it in memory for the session and never touches disk.
 
 Randomised/private MACs (the locally-administered bit — common on modern phones)
 are labelled as such rather than guessed.
@@ -114,12 +120,15 @@ uv pip install -e .
 The package is split so new capabilities slot in cleanly:
 
 - `net.py` — interface discovery & subnet math
-- `engine.py` — the async liveness sweep + ARP/DNS/vendor merge
+- `engine.py` — the async ICMP sweep + ARP/DNS/vendor merge
 - `discovery.py` — mDNS/Bonjour (add service types to `_LABELS`)
 - `ssdp.py` — SSDP/UPnP M-SEARCH + description parsing
 - `banners.py` — HTTP `Server`/`<title>` identification
-- `history.py` — persistent device history (JSON in the user data dir)
+- `ports.py` — the port lists, names and categories (one table drives the TUI
+  colours, the banner probe and what `Enter` launches)
+- `history.py` — device history (JSON in the user data dir)
 - `vendors.py` — MAC → vendor
+- `launch.py` — open a port in the browser / Finder / a terminal
 - `tui.py` — the Textual app
 - `models.py` — the `Device` / `Interface` records
 
@@ -129,7 +138,7 @@ unknown device joins, or exporting history to a timeline.
 ## Development
 
 The test suite is hermetic — every shell-out (`ping`/`arp`/`ifconfig`/`networksetup`/
-`route`), socket, and mDNS browse is mocked — so it needs no root, no LAN, and no
+`route`), socket (ICMP, SSDP, TCP), and mDNS browse is mocked — so it needs no root, no LAN, and no
 macOS, and runs in seconds. 100% line **and** branch coverage is enforced.
 
 ```sh

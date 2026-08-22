@@ -8,33 +8,25 @@ Ghostty, iTerm, or Terminal — falling back to the best installed one; on Linux
 it's the first available GUI terminal (honouring `$TERMINAL`). Everything is
 best-effort and never raises into the TUI.
 """
-from __future__ import annotations
-
 import os
 import shlex
 import shutil
 import subprocess
-import sys
 
-
-def _is_linux() -> bool:
-    return sys.platform.startswith("linux")
+from . import ports
+from ._platform import is_linux
 
 
 def _open_cmd() -> str:
     """The OS opener for URL schemes: `xdg-open` on Linux, `open` on macOS."""
-    return "xdg-open" if _is_linux() else "open"
+    return "xdg-open" if is_linux() else "open"
 
-# Ports whose service is plain HTTP (browser, no TLS). Anything web-ish but not
-# in the HTTPS set lands here.
-_HTTP_PORTS = {80, 3000, 5000, 5173, 8000, 8008, 8080, 8081, 8086, 8096, 8123,
-               8888, 9000, 9090, 32400}
-_HTTP_SVC = {"http", "http-alt", "dev-http", "vite", "cast", "jellyfin", "plex",
-             "home-assistant", "influxdb", "prometheus", "upnp"}
-_HTTPS_PORTS = {443, 8443}
-# Default port per URL scheme, so e.g. :80 drops the redundant suffix.
-_SCHEME_DEFAULT = {"http": 80, "https": 443, "ftp": 21, "smb": 445, "afp": 548,
-                   "vnc": 5900, "rtsp": 554}
+# Services that open in a browser over plain HTTP: the names of the known HTTP
+# ports, so a non-standard port carrying one of them (e.g. 8009 "cast") also
+# opens as a URL. Anything in the HTTPS set goes out as https://.
+_HTTP_SVC = {ports.PORT_NAMES[p] for p in ports.HTTP_PORTS}
+# Default port per URL scheme we build with a port, so e.g. :80 drops the suffix.
+_SCHEME_DEFAULT = {"http": 80, "https": 443, "ftp": 21, "rtsp": 554}
 
 
 def plan(ip: str, port: int, service: str | None) -> tuple[str, str, str]:
@@ -49,9 +41,9 @@ def plan(ip: str, port: int, service: str | None) -> tuple[str, str, str]:
         host = ip if port == _SCHEME_DEFAULT.get(scheme) else f"{ip}:{port}"
         return f"{scheme}://{host}"
 
-    if port in _HTTPS_PORTS or s.startswith("https"):
+    if port in ports.HTTPS_PORTS or s.startswith("https"):
         return ("open", url("https"), "browser (HTTPS)")
-    if port in _HTTP_PORTS or s in _HTTP_SVC:
+    if port in ports.HTTP_PORTS or s in _HTTP_SVC:
         return ("open", url("http"), "browser")
     if port == 22 or s == "ssh":
         return ("terminal", f"ssh {ip}", "ssh")
@@ -86,7 +78,7 @@ def launch(ip: str, port: int, service: str | None) -> tuple[bool, str]:
         argv, term = _terminal_argv(target)
         _spawn(argv)
         return True, f"{label} → {target}  · {term}"
-    except Exception as exc:  # noqa: BLE001 - never raise into the TUI
+    except Exception as exc:  # never raise into the TUI
         return False, f"couldn't launch: {exc}"
 
 
@@ -169,7 +161,7 @@ def _terminal_argv(command: str) -> tuple[list[str], str]:
     """Argv that opens a new terminal window running `command`, plus a display
     name for the chosen terminal. `command` is a shell-free token string we built
     (ssh/telnet/nc + a validated IP)."""
-    if _is_linux():
+    if is_linux():
         return _terminal_argv_linux(command)
     term = _pick_terminal()
     if term == "ghostty":

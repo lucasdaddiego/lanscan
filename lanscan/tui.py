@@ -6,8 +6,6 @@ The list refreshes on an interval, runs mDNS in the background, re-discovers
 interfaces each cycle, and keeps the selection pinned to the same device (by IP)
 across refreshes.
 """
-from __future__ import annotations
-
 import asyncio
 import json
 import time
@@ -27,11 +25,12 @@ from textual.theme import Theme
 from textual.widgets import DataTable, Footer, Header, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
-from . import history, launch, net, ports
+from . import history, launch, net, ports, vendors
 from .engine import scan
 from .models import Device
 
 _KIND_CYCLE = {None: "wifi", "wifi": "ethernet", "ethernet": None}
+_SCOPE_LABEL = {None: "All", "wifi": "Wi-Fi", "ethernet": "Ethernet"}
 
 # Compact master columns; everything wide lives in the detail pane.
 _COLUMNS = (
@@ -76,28 +75,10 @@ _CAT_COLOR = {
     "media": C["purple"], "data": C["orange"], "iot": C["cyan"],
     "mail": C["red"], "infra": C["muted"],
 }
-_SVC_CAT = {
-    "http": "web", "https": "web", "http-alt": "web", "https-alt": "web",
-    "dev-http": "web", "vite": "web", "prometheus": "web",
-    "ssh": "shell", "telnet": "shell", "rdp": "shell", "vnc": "shell",
-    "ftp": "file", "smb": "file", "afp": "file", "lpd": "file", "ipp": "file",
-    "printer": "file", "nfs": "file",
-    "airplay": "media", "cast": "media", "rtsp": "media", "plex": "media",
-    "jellyfin": "media",
-    "mysql": "data", "postgres": "data", "redis": "data", "mongodb": "data",
-    "mssql": "data", "influxdb": "data", "elasticsearch": "data",
-    "memcached": "data", "amqp": "data",
-    "mqtt": "iot", "mqtts": "iot", "upnp": "iot", "home-assistant": "iot",
-    "iphone": "iot",
-    "smtp": "mail", "imap": "mail", "imaps": "mail", "pop3": "mail",
-    "pop3s": "mail",
-    "docker": "infra", "msrpc": "infra", "netbios": "infra", "ldap": "infra",
-    "dns": "infra",
-}
 
 
 def _port_color(name: str | None) -> str:
-    return _CAT_COLOR.get(_SVC_CAT.get((name or "").lower(), ""), C["faint"])
+    return _CAT_COLOR.get(ports.PORT_CATEGORY.get((name or "").lower(), ""), C["faint"])
 
 
 # mDNS service labels are free-form friendly names, so match by keyword.
@@ -123,7 +104,7 @@ def _svc_color(label: str) -> str:
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 DASH = "—"
-_VIA = {"icmp": "ICMP ping", "tcp": "TCP probe", "arp": "ARP", "self": "this host"}
+_VIA = {"icmp": "ICMP echo", "arp": "ARP", "self": "this host"}
 
 
 def _kv() -> RTable:
@@ -241,10 +222,12 @@ class LanScanApp(App):
         self._fullscan_worker = None
         self._selected_ip: str | None = None
         self._mdns = None
-        self._history: dict[str, dict] | None = None  # persisted across runs (None = off)
+        # Device history: loaded from + saved to disk unless --no-history, in which
+        # case it's session-only (first_seen still survives across refreshes).
+        self._history: dict[str, dict] = {}
+        self._persist = not args.no_history
         self._ifaces: list = []
         self._devices: list[Device] = []
-        self._first_seen: dict[str, float] = {}
         self._known: set[str] = set()
         self._new: set[str] = set()
         self._scanning = False
@@ -253,6 +236,8 @@ class LanScanApp(App):
         self._last_scan = 0.0
         self._scanned_once = False
         self._spin = 0  # braille-spinner frame, ticked while scanning
+        self._spin_timer = None  # paused while idle (no scan / full-scan running)
+        self._status_at = 0.0  # last status repaint driven by scan progress
         self._detail_sig: tuple | None = None  # skip redundant detail re-renders
 
     def compose(self) -> ComposeResult:
@@ -272,26 +257,29 @@ class LanScanApp(App):
         self.register_theme(THEME)
         self.theme = "lanscan"
         ports.raise_fd_limit()
-        if not self.args.no_history:
+        if self._persist:
             self._history = history.load()
         if not self.args.no_mdns:
             try:
                 from .discovery import MdnsDiscovery
                 self._mdns = MdnsDiscovery()
                 await self._mdns.start()
-            except Exception:  # noqa: BLE001 - mDNS is optional
+            except Exception:  # mDNS is optional
                 self._mdns = None
         self.set_interval(self.args.interval, self._trigger_scan)
         self.set_timer(1.2, self._trigger_scan)  # first scan after brief mDNS warmup
-        self.set_interval(0.1, self._tick_spin)  # animate the scan spinner
+        self._spin_timer = self.set_interval(0.1, self._tick_spin)  # scan spinner
         self._update_status()
         self._refresh_detail()  # show the "Scanning…" placeholder up front
 
     def _tick_spin(self) -> None:
         """Advance the spinner only while there's activity to show — and only
         repaint the detail pane during the very first scan, when it holds the
-        full-screen placeholder (later repaints could wipe a text selection)."""
+        full-screen placeholder (later repaints could wipe a text selection).
+        Idle, the 10 Hz timer pauses itself; whatever starts activity resumes it."""
         if not (self._scanning or self._fullscan or not self._scanned_once):
+            if self._spin_timer is not None:
+                self._spin_timer.pause()
             return
         self._spin = (self._spin + 1) % len(_SPINNER)
         self._update_status()
@@ -301,11 +289,16 @@ class LanScanApp(App):
     async def on_unmount(self) -> None:
         if self._mdns is not None:
             await self._mdns.stop()
-        if self._history is not None:
+        if self._persist:
             history.save(self._history)
+
+    def _wake_spinner(self) -> None:
+        if self._spin_timer is not None:
+            self._spin_timer.resume()
 
     # ---- scanning -------------------------------------------------------
     def _trigger_scan(self) -> None:
+        self._wake_spinner()  # also covers the pre-first-scan placeholder while paused
         if self._scanning or self._paused:
             return
         self._scanning = True
@@ -319,6 +312,7 @@ class LanScanApp(App):
             self._ifaces = net.discover_interfaces(
                 only_device=self.args.interface, only_kind=kind)
             self._update_status()
+            await vendors.preload()  # one-off parse off the loop; no-op after
             devices = await scan(
                 self._ifaces, resolve=not self.args.no_resolve, mdns=self._mdns,
                 ssdp_enabled=not self.args.no_ssdp, scan_ports=self._ports,
@@ -329,7 +323,7 @@ class LanScanApp(App):
         except asyncio.CancelledError:
             cancelled = True
             raise
-        except Exception as exc:  # noqa: BLE001 - a scan error must not kill the TUI
+        except Exception as exc:  # a scan error must not kill the TUI
             self.notify(f"Scan failed: {exc}", severity="error")
         finally:
             self._scanning = False
@@ -354,23 +348,19 @@ class LanScanApp(App):
 
     def _on_progress(self, done: int, total: int) -> None:
         self._progress = (done, total)
-        if done == total or done % 24 == 0:  # throttle UI churn
+        now = time.monotonic()
+        if done == total or now - self._status_at >= 0.1:  # throttle UI churn
+            self._status_at = now
             self._update_status()
 
     def _apply(self, devices: list[Device]) -> None:
         current = {d.ip for d in devices}
-        if self._history is not None:
-            # Persisted history owns first_seen/ever_seen and survives restarts.
-            # merge() returns a *new* map when it prunes to MAX_RECORDS, so rebind
-            # rather than dropping the return value — otherwise the cap never bites.
-            self._history = history.merge(self._history, devices)
+        # History owns first_seen / ever_seen / remembered_name. merge() returns a
+        # *new* map when it prunes to MAX_RECORDS, so rebind rather than dropping
+        # the return value — otherwise the cap never bites.
+        self._history = history.merge(self._history, devices)
+        if self._persist:
             history.save(self._history)
-        else:
-            for d in devices:
-                if d.ip in self._first_seen:
-                    d.first_seen = self._first_seen[d.ip]
-                else:
-                    self._first_seen[d.ip] = d.first_seen
         self._new = (current - self._known) if self._scanned_once else set()
         self._known |= current
         for d in devices:  # keep any on-demand full-scan results across refreshes
@@ -383,13 +373,12 @@ class LanScanApp(App):
     def _refresh_table(self) -> None:
         try:
             table = self.query_one("#devices", DataTable)
-        except Exception:  # noqa: BLE001 - not mounted / tearing down
+        except Exception:  # not mounted / tearing down
             return
         prev_ip = self._selected_ip  # survives clear()
         table.clear()
 
-        present = {d.ip for d in self._devices}
-        target_row = 0
+        target_row = 0  # falls back to the top row when prev_ip is gone
         for idx, d in enumerate(self._devices):
             is_new = d.ip in self._new
             if is_new:
@@ -418,8 +407,6 @@ class LanScanApp(App):
                 target_row = idx
 
         if self._devices:
-            if prev_ip not in present:
-                target_row = 0
             table.move_cursor(row=target_row)
             self._selected_ip = self._devices[target_row].ip
         else:
@@ -487,7 +474,7 @@ class LanScanApp(App):
     def _refresh_detail(self, *, force: bool = False) -> None:
         try:
             pane = self.query_one("#detail", Static)
-        except Exception:  # noqa: BLE001 - not mounted yet
+        except Exception:  # not mounted yet
             return
         dev = self._selected_device()
         sig = self._detail_signature(dev)
@@ -497,7 +484,7 @@ class LanScanApp(App):
         pane.update(self._detail_renderable(dev))
 
     def _placeholder(self):
-        scope = {None: "All", "wifi": "Wi-Fi", "ethernet": "Ethernet"}[self._kind]
+        scope = _SCOPE_LABEL[self._kind]
         if not self._scanned_once:
             glyph, gcol = _SPINNER[self._spin], C["cyan"]
             title, sub = "Scanning your network…", f"discovering devices on {scope}"
@@ -544,7 +531,12 @@ class LanScanApp(App):
 
         # IDENTITY
         ident = _kv()
-        ident.add_row("Name", _val(dev.name))
+        if not dev.live_name and dev.remembered_name:
+            name = Text(dev.remembered_name)
+            name.append("  (last known)", style="dim")
+        else:
+            name = _val(dev.name)
+        ident.add_row("Name", name)
         if dev.mdns_name:
             ident.add_row("mDNS", Text(dev.mdns_name))
         if dev.upnp_name:
@@ -654,9 +646,9 @@ class LanScanApp(App):
     def _update_status(self) -> None:
         try:
             status = self.query_one("#status", Static)
-        except Exception:  # noqa: BLE001 - not mounted yet
+        except Exception:  # not mounted yet
             return
-        scope = {None: "All", "wifi": "Wi-Fi", "ethernet": "Ethernet"}[self._kind]
+        scope = _SCOPE_LABEL[self._kind]
         parts = [f"{i.label} {i.cidr}"
                  + ("" if net.sweepable(i.cidr) else " (too large to sweep)")
                  for i in self._ifaces]
@@ -751,10 +743,11 @@ class LanScanApp(App):
     @work(exclusive=True, group="fullscan")
     async def _run_full_scan(self, ip: str) -> None:
         self._fullscan = (ip, 0, 65535)
+        self._wake_spinner()
         self.notify(f"Full-scanning {ip} — gentle, can take a while. Press f to cancel.",
                     title="Full scan")
         self._update_status()
-        self._refresh_table()  # mark the scanning row (also refreshes the detail)
+        self._refresh_detail()  # the PORTS header picks up "scanning 0%"
 
         def prog(done: int, total: int) -> None:
             self._fullscan = (ip, done, total)
@@ -767,7 +760,7 @@ class LanScanApp(App):
         except asyncio.CancelledError:
             self.notify(f"Full scan of {ip} cancelled.", severity="warning")
             raise
-        except Exception as exc:  # noqa: BLE001 - best-effort; never crash the TUI
+        except Exception as exc:  # best-effort; never crash the TUI
             self.notify(f"Full scan of {ip} failed: {exc}", title="Full scan",
                         severity="error")
             return
@@ -775,13 +768,13 @@ class LanScanApp(App):
             self._fullscan = None
             self._fullscan_worker = None
             self._update_status()
-            self._refresh_table()  # clear the "scanning…" marker on every exit path
+            self._refresh_detail()  # clear the "scanning…" suffix on every exit path
 
         self._full_ports[ip] = found
         for d in self._devices:
             if d.ip == ip:
                 d.open_ports = sorted(set(d.open_ports) | set(found))
-        self._refresh_table()
+        self._refresh_detail()
         shown = ", ".join(map(str, found[:15])) + (" …" if len(found) > 15 else "")
         self.notify(f"{ip}: {len(found)} open ports — {shown or 'none'}",
                     title="Full scan done")

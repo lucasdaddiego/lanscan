@@ -2,8 +2,6 @@
 
 All sockets are mocked via asyncio.open_connection; nothing hits the network.
 """
-from __future__ import annotations
-
 import asyncio
 import ssl
 
@@ -143,7 +141,7 @@ def test_title(body, expected):
 async def test_fetch_ok(monkeypatch):
     writer = FakeWriter()
     _patch_conn(monkeypatch, reader=FakeReader(_RESPONSE), writer=writer)
-    status, headers, body = await banners.fetch("1.2.3.4", 80)
+    status, headers, _body = await banners.fetch("1.2.3.4", 80)
     assert status == 200
     assert headers["server"] == "nginx/1.21"
     assert writer.closed is True
@@ -192,7 +190,7 @@ async def test_fetch_connect_error(monkeypatch):
 
 
 async def test_fetch_connect_timeout(monkeypatch):
-    _patch_conn(monkeypatch, exc=asyncio.TimeoutError())
+    _patch_conn(monkeypatch, exc=TimeoutError())
     assert await banners.fetch("1.2.3.4", 80) is None
 
 

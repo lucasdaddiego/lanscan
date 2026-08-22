@@ -2,9 +2,9 @@
 
 The UDP datagram endpoint and the description-XML fetch are both mocked.
 """
-from __future__ import annotations
-
 import asyncio
+
+import pytest
 
 from lanscan import ssdp
 
@@ -151,9 +151,25 @@ class FakeTransport:
         self.closed = True
 
 
-def _patch_endpoint(monkeypatch, responses=None, *, exc=None):
+class FakeSock:
+    def __init__(self, local_ip=None):
+        self.local_ip = local_ip
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def _patch_endpoint(monkeypatch, responses=None, *, exc=None, fail_ips=()):
+    """Fake the sockets + datagram endpoints. Returns the list of transports
+    opened (one per local IP that didn't fail); each records what it sent."""
     loop = asyncio.get_running_loop()
-    transport = FakeTransport()
+    transports = []
+
+    def fake_socket(local_ip):
+        if local_ip in fail_ips:
+            raise OSError(f"cannot bind {local_ip}")
+        return FakeSock(local_ip)
 
     async def fake_cde(factory, **kw):
         if exc:
@@ -161,10 +177,14 @@ def _patch_endpoint(monkeypatch, responses=None, *, exc=None):
         proto = factory()
         if responses is not None:
             proto.responses = responses
+        transport = FakeTransport()
+        transport.local_ip = kw["sock"].local_ip
+        transports.append(transport)
         return transport, proto
 
+    monkeypatch.setattr(ssdp, "_multicast_socket", fake_socket)
     monkeypatch.setattr(loop, "create_datagram_endpoint", fake_cde)
-    return transport
+    return transports
 
 
 async def test_probe_endpoint_error(monkeypatch):
@@ -173,10 +193,67 @@ async def test_probe_endpoint_error(monkeypatch):
 
 
 async def test_probe_no_responses(monkeypatch):
-    transport = _patch_endpoint(monkeypatch, responses={})
+    transports = _patch_endpoint(monkeypatch, responses={})
     assert await ssdp.probe(timeout=0) == {}
+    (transport,) = transports                  # no local IPs -> one unpinned socket
+    assert transport.local_ip is None
     assert transport.closed is True
-    assert transport.sent  # the M-SEARCH was actually transmitted
+    assert len(transport.sent) == 2            # the M-SEARCH goes out twice
+
+
+async def test_probe_sends_from_every_interface(monkeypatch):
+    transports = _patch_endpoint(monkeypatch, responses={})
+    await ssdp.probe(["192.168.0.10", "10.0.0.2"], timeout=0)
+    assert [t.local_ip for t in transports] == ["192.168.0.10", "10.0.0.2"]
+    assert all(len(t.sent) == 2 and t.closed for t in transports)
+
+
+async def test_probe_skips_an_interface_that_cannot_bind(monkeypatch):
+    transports = _patch_endpoint(monkeypatch, responses={}, fail_ips={"10.0.0.2"})
+    await ssdp.probe(["192.168.0.10", "10.0.0.2"], timeout=0)
+    assert [t.local_ip for t in transports] == ["192.168.0.10"]
+
+
+async def test_probe_falls_back_to_default_route_when_no_interface_binds(monkeypatch):
+    transports = _patch_endpoint(monkeypatch, responses={}, fail_ips={"192.168.0.10"})
+    await ssdp.probe(["192.168.0.10"], timeout=0)
+    assert [t.local_ip for t in transports] == [None]
+
+
+def test_multicast_socket_pins_egress_and_closes_on_error(monkeypatch):
+    calls = []
+
+    class Sock:
+        def __init__(self, *a):
+            self.closed = False
+
+        def setblocking(self, flag):
+            calls.append(("blocking", flag))
+
+        def setsockopt(self, level, opt, val):
+            calls.append(("opt", level, opt, val))
+
+        def bind(self, addr):
+            calls.append(("bind", addr))
+            if addr[0] == "10.9.9.9":
+                raise OSError("bad bind")
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(ssdp.socket, "socket", Sock)
+    sock = ssdp._multicast_socket("192.168.0.10")
+    assert sock.closed is False
+    assert ("opt", ssdp.socket.IPPROTO_IP, ssdp.socket.IP_MULTICAST_IF,
+            ssdp.socket.inet_aton("192.168.0.10")) in calls
+    assert ("bind", ("192.168.0.10", 0)) in calls
+
+    calls.clear()
+    sock = ssdp._multicast_socket(None)
+    assert ("bind", ("0.0.0.0", 0)) in calls and not any(c[0] == "opt" for c in calls)
+
+    with pytest.raises(OSError):
+        ssdp._multicast_socket("10.9.9.9")
 
 
 async def test_probe_collects_and_enriches(monkeypatch):

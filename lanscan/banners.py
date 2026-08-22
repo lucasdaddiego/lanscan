@@ -6,17 +6,15 @@ panels routinely identify themselves there even when mDNS and reverse-DNS don't.
 Best-effort throughout: any failure yields no banner rather than breaking the scan.
 No root, no extra dependencies.
 """
-from __future__ import annotations
-
 import asyncio
+import contextlib
 import re
 import ssl
 
+from . import ports
+
 # Web ports we'll speak HTTP(S) to, in preference order (plain HTTP first).
-_WEB_PORTS: tuple[int, ...] = (
-    80, 8080, 8000, 8008, 8081, 8888, 5000, 9000, 8123, 8096, 32400, 443, 8443,
-)
-_HTTPS_PORTS = {443, 8443}
+_WEB_PORTS: tuple[int, ...] = (*ports.HTTP_PORTS, *ports.HTTPS_PORTS)
 
 _TITLE_RE = re.compile(rb"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
@@ -43,7 +41,7 @@ async def fetch(host: str, port: int, path: str = "/", *, tls: bool = False,
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port, ssl=ctx), timeout=timeout)
-    except (asyncio.TimeoutError, OSError):
+    except OSError:  # includes TimeoutError
         return None
     try:
         req = (f"GET {path} HTTP/1.0\r\nHost: {host}\r\n"
@@ -63,21 +61,19 @@ async def fetch(host: str, port: int, path: str = "/", *, tls: bool = False,
                 chunk = await asyncio.wait_for(
                     reader.read(max_bytes - size),
                     timeout=max(0.0, deadline - loop.time()))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break
             if not chunk:                       # EOF
                 break
             chunks.append(chunk)
             size += len(chunk)
         raw = b"".join(chunks)
-    except (asyncio.TimeoutError, OSError):
+    except OSError:  # includes TimeoutError
         return None
     finally:
         writer.close()
-        try:
+        with contextlib.suppress(OSError):
             await writer.wait_closed()
-        except OSError:
-            pass
     return _split_response(raw)
 
 
@@ -116,7 +112,7 @@ async def identify(ip: str, open_ports: list[int], *, timeout: float = 2.0):
     port = next((p for p in _WEB_PORTS if p in open_ports), None)
     if port is None:
         return None, None
-    res = await fetch(ip, port, tls=port in _HTTPS_PORTS, timeout=timeout)
+    res = await fetch(ip, port, tls=port in ports.HTTPS_PORTS, timeout=timeout)
     if res is None:
         return None, None
     _status, headers, body = res

@@ -3,8 +3,6 @@
 All of macOS's `networksetup` / `route` / `ifconfig` shell-outs and `ifaddr`'s
 adapter enumeration are mocked, so this runs anywhere.
 """
-from __future__ import annotations
-
 from types import SimpleNamespace
 
 import pytest
@@ -53,14 +51,6 @@ def test_is_virtual_name(device, virtual):
 ])
 def test_sweepable(cidr, ok):
     assert net.sweepable(cidr) is ok
-
-
-def test_broadcast_set_skips_bad_cidr():
-    ifaces = [
-        Interface("en0", "Wi-Fi", "wifi", "192.168.0.10", 24, "192.168.0.0/24"),
-        Interface("en1", "Eth", "ethernet", "10.0.0.2", 24, "garbage"),
-    ]
-    assert net.broadcast_set(ifaces) == {"192.168.0.255"}
 
 
 def test_hosts_for_skips_too_large_and_dedupes():
@@ -277,7 +267,7 @@ def test_ifconfig_facts_linux_addr_error(monkeypatch):
 # ---- platform dispatchers -------------------------------------------------
 @pytest.mark.parametrize("linux,expected", [(True, "L"), (False, "M")])
 def test_hardware_ports_dispatch(monkeypatch, linux, expected):
-    monkeypatch.setattr(net, "_is_linux", lambda: linux)
+    monkeypatch.setattr(net, "is_linux", lambda: linux)
     monkeypatch.setattr(net, "_hardware_ports_linux", lambda: "L")
     monkeypatch.setattr(net, "_hardware_ports_macos", lambda: "M")
     assert net._hardware_ports() == expected
@@ -285,7 +275,7 @@ def test_hardware_ports_dispatch(monkeypatch, linux, expected):
 
 @pytest.mark.parametrize("linux,expected", [(True, "L"), (False, "M")])
 def test_ifconfig_facts_dispatch(monkeypatch, linux, expected):
-    monkeypatch.setattr(net, "_is_linux", lambda: linux)
+    monkeypatch.setattr(net, "is_linux", lambda: linux)
     monkeypatch.setattr(net, "_ifconfig_facts_linux", lambda: "L")
     monkeypatch.setattr(net, "_ifconfig_facts_macos", lambda: "M")
     assert net._ifconfig_facts() == expected
@@ -293,17 +283,11 @@ def test_ifconfig_facts_dispatch(monkeypatch, linux, expected):
 
 @pytest.mark.parametrize("linux,expected", [(True, "L"), (False, "M")])
 def test_default_gateway_dispatch(monkeypatch, linux, expected):
-    monkeypatch.setattr(net, "_is_linux", lambda: linux)
+    monkeypatch.setattr(net, "is_linux", lambda: linux)
     monkeypatch.setattr(net, "_default_gateway_linux", lambda: "L")
     monkeypatch.setattr(net, "_default_gateway_macos", lambda: "M")
     assert net.default_gateway() == expected
 
-
-def test_is_linux_reads_platform(monkeypatch):
-    monkeypatch.setattr(net.sys, "platform", "linux")
-    assert net._is_linux() is True
-    monkeypatch.setattr(net.sys, "platform", "darwin")
-    assert net._is_linux() is False
 
 
 # ---- discover_interfaces (the orchestrator) -------------------------------

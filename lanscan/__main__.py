@@ -4,8 +4,6 @@ Launches the live TUI. `--update-vendors` downloads the IEEE/Wireshark vendor DB
 and exits. Export of the current device list is done from inside the TUI (press
 `e`).
 """
-from __future__ import annotations
-
 import argparse
 import sys
 

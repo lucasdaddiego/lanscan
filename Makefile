@@ -31,7 +31,7 @@ vendors: $(PY) ## Download the IEEE/Wireshark MAC vendor database
 	@$(PY) -m lanscan --update-vendors
 
 dev: $(PY) ## Install test/dev dependencies into the venv
-	$(UV) pip install --python $(PY) -e ".[dev]"
+	$(UV) pip install --python $(PY) -e . --group dev
 
 test: dev ## Run the test suite (enforces 100% coverage)
 	@$(PY) -m pytest --cov=lanscan --cov-report=term-missing
@@ -40,8 +40,8 @@ lint: ## Lint with ruff (same version CI pins)
 	@uvx ruff@$(RUFF_VERSION) check .
 
 clean: ## Remove caches and build artifacts
-	@rm -rf lanscan/__pycache__ __pycache__ *.egg-info build dist
-	@find . -name '*.pyc' -delete
+	@rm -rf *.egg-info build dist .pytest_cache .ruff_cache .coverage coverage.xml htmlcov
+	@find . -name '__pycache__' -type d -prune -exec rm -rf {} +
 	@echo "cleaned"
 
 distclean: clean ## Also remove the virtualenv

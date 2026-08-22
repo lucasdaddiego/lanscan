@@ -5,8 +5,7 @@ Lookup order: cached Wireshark `manuf` database (fetched on demand via
 Locally-administered addresses (randomised privacy MACs) are reported as such
 rather than guessed, since their OUI is meaningless.
 """
-from __future__ import annotations
-
+import asyncio
 import os
 import re
 import urllib.request
@@ -110,6 +109,14 @@ def _tables() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     return o24, o28, o36
 
 
+async def preload() -> None:
+    """Parse the manuf DB off the event loop. It's ~50k lines — done inline it
+    would stall the TUI for ~100ms in the middle of the first scan."""
+    if _tables.cache_info().currsize:
+        return
+    await asyncio.get_running_loop().run_in_executor(None, _tables)
+
+
 def lookup(mac: str | None) -> str | None:
     """Vendor name for a (normalised) MAC, or None if unknown/randomised."""
     if not mac:
@@ -138,7 +145,7 @@ def update_manuf() -> tuple[bool, str]:
             data = resp.read()
         tmp.write_bytes(data)
         os.replace(tmp, _MANUF_PATH)
-    except Exception as exc:  # noqa: BLE001 - report any fetch/IO failure to the user
+    except Exception as exc:  # report any fetch/IO failure to the user
         return False, f"{type(exc).__name__}: {exc}"
     finally:
         _tables.cache_clear()

@@ -3,8 +3,6 @@
 zeroconf's AsyncZeroconf / AsyncServiceBrowser / AsyncServiceInfo and the event
 loop are all faked, so nothing touches the network or spawns real browsers.
 """
-from __future__ import annotations
-
 import pytest
 
 from lanscan import discovery
@@ -87,13 +85,12 @@ def patched_zeroconf(monkeypatch):
 
 
 # ---- start / stop ---------------------------------------------------------
-async def test_start_registers_browsers(patched_zeroconf):
+async def test_start_registers_one_browser_for_every_labelled_type(patched_zeroconf):
     md = MdnsDiscovery()
     await md.start()
     assert isinstance(md._azc, FakeAZC)
-    # One meta browser + one per pre-browsed type.
-    assert len(md._browsers) == 1 + len(discovery._PREBROWSE)
-    assert md._types == set(discovery._PREBROWSE)
+    assert md._browser.service_type == discovery._TYPES
+    assert set(md._browser.service_type) == {f"{t}.local." for t in discovery._LABELS}
 
 
 async def test_stop_cancels_and_closes(patched_zeroconf):
@@ -102,7 +99,7 @@ async def test_stop_cancels_and_closes(patched_zeroconf):
     azc = md._azc
     await md.stop()
     assert azc.closed is True
-    assert all(b.cancelled for b in md._browsers)
+    assert md._browser.cancelled is True
 
 
 async def test_stop_without_start_is_noop():
@@ -121,52 +118,18 @@ async def test_stop_suppresses_errors():
             raise RuntimeError("close failed")
 
     md = MdnsDiscovery()
-    md._browsers = [BoomBrowser()]
+    md._browser = BoomBrowser()
     md._azc = BoomAZC()
     await md.stop()  # both errors swallowed by contextlib.suppress
 
 
-# ---- _add_type ------------------------------------------------------------
-def test_add_type_noop_without_azc():
-    md = MdnsDiscovery()
-    md._add_type("_x._tcp.local.")  # azc is None -> ignored
-    assert md._types == set()
-    assert md._browsers == []
-
-
-def test_add_type_dedupes(monkeypatch):
-    monkeypatch.setattr(discovery, "AsyncServiceBrowser", FakeBrowser)
-    md = MdnsDiscovery()
-    md._azc = FakeAZC()
-    md._add_type("_x._tcp.local.")
-    md._add_type("_x._tcp.local.")  # already present -> no second browser
-    assert md._types == {"_x._tcp.local."}
-    assert len(md._browsers) == 1
-
-
-# ---- _on_meta / _on_service ----------------------------------------------
+# ---- _on_service ----------------------------------------------------------
 class FakeLoop:
     def __init__(self):
         self.coros = []
 
     def call_soon_threadsafe(self, fn, *args):
         fn(*args)  # run inline so the effect is observable synchronously
-
-
-def test_on_meta_adds_discovered_type(monkeypatch):
-    monkeypatch.setattr(discovery, "AsyncServiceBrowser", FakeBrowser)
-    md = MdnsDiscovery()
-    md._azc = FakeAZC()
-    md._loop = FakeLoop()
-    md._on_meta(None, "_meta", "_new._tcp.local.", ServiceStateChange.Added)
-    assert "_new._tcp.local." in md._types
-
-
-def test_on_meta_ignores_non_added():
-    md = MdnsDiscovery()
-    md._loop = FakeLoop()
-    md._on_meta(None, "_meta", "_new._tcp.local.", ServiceStateChange.Removed)
-    assert md._types == set()
 
 
 def test_on_service_no_loop_returns():
@@ -211,12 +174,14 @@ def _info_factory(info):
     return lambda service_type, name: info
 
 
-async def test_resolve_ignores_unknown_type(monkeypatch):
-    monkeypatch.setattr(discovery, "AsyncServiceInfo", _info_factory(_Info()))
+async def test_resolve_unlabelled_type_falls_back_to_its_key(monkeypatch):
+    # Never browsed in practice, but a stray type must not crash the resolver.
+    info = _Info(properties={}, addresses=["192.168.0.9"])
+    monkeypatch.setattr(discovery, "AsyncServiceInfo", _info_factory(info))
     md = MdnsDiscovery()
     md._azc = FakeAZC()
     await md._resolve("_obscure._tcp.local.", "X._obscure._tcp.local.")
-    assert md.snapshot() == {}
+    assert md.snapshot() == {"192.168.0.9": {"name": "X", "services": {"_obscure._tcp"}}}
 
 
 async def test_resolve_request_false(monkeypatch):

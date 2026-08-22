@@ -1,6 +1,4 @@
 """Tests for lanscan.history — persistent device history."""
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -68,24 +66,31 @@ def test_merge_new_device():
     records = {}
     dev = Device(ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF", mdns_name="Box")
     out = history.merge(records, [dev], now=100.0)
-    assert out["AA:BB:CC:DD:EE:FF"] == {
-        "first_seen": 100.0, "last_seen": 100.0, "name": "Box", "count": 1}
+    assert out["AA:BB:CC:DD:EE:FF"] == {"first_seen": 100.0, "last_seen": 100.0, "name": "Box"}
     assert dev.first_seen == 100.0
     assert dev.ever_seen is False
 
 
 def test_merge_returning_device():
-    records = {"AA:BB:CC:DD:EE:FF": {"first_seen": 50.0, "last_seen": 60.0,
-                                     "name": "Old", "count": 3}}
+    records = {"AA:BB:CC:DD:EE:FF": {"first_seen": 50.0, "last_seen": 60.0, "name": "Old"}}
     dev = Device(ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF", mdns_name="Box")
     history.merge(records, [dev], now=100.0)
     rec = records["AA:BB:CC:DD:EE:FF"]
     assert rec["first_seen"] == 50.0       # preserved
     assert rec["last_seen"] == 100.0       # bumped
-    assert rec["count"] == 4               # incremented
     assert rec["name"] == "Box"            # refreshed from the live name
     assert dev.first_seen == 50.0          # device inherits stored first_seen
     assert dev.ever_seen is True
+    assert dev.remembered_name is None     # it has a live name; nothing to remember
+
+
+def test_merge_returning_nameless_device_gets_its_last_known_name():
+    records = {"AA:BB:CC:DD:EE:FF": {"first_seen": 50.0, "last_seen": 60.0, "name": "Kettle"}}
+    dev = Device(ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF")   # no name this run
+    history.merge(records, [dev], now=100.0)
+    assert dev.remembered_name == "Kettle"
+    assert dev.name == "Kettle"                            # surfaces as the display name
+    assert records["AA:BB:CC:DD:EE:FF"]["name"] == "Kettle"  # stored name kept
 
 
 def test_merge_returning_unnamed_keeps_stored_name_and_missing_first_seen():

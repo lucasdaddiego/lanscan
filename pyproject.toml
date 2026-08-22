@@ -35,14 +35,7 @@ Issues = "https://github.com/lucasdaddiego/lanscan/issues"
 [project.scripts]
 lanscan = "lanscan.__main__:main"
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.24",
-    "pytest-cov>=5.0",
-]
-
-# PEP 735 group, so `uv sync --group dev` works too (mirrors the dev extra).
+# PEP 735 dependency group: `uv pip install -e . --group dev` / `uv sync --group dev`.
 [dependency-groups]
 dev = [
     "pytest>=8.0",
@@ -81,4 +74,16 @@ exclude_lines = [
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+select = [
+    "E", "F", "W", "I",  # pycodestyle / pyflakes / isort
+    "UP",                # pyupgrade — we're 3.14-only, so use what that buys
+    "B",                 # bugbear
+    "SIM",               # simplify
+    "C4",                # comprehensions
+    "PERF",              # perflint
+    "RUF",               # ruff's own
+]
+ignore = [
+    "RUF012",  # Textual's class-level BINDINGS / CSS are the framework's convention
+    "RUF001", "RUF002", "RUF003",  # the UI deliberately uses —, …, ▸ and friends
+]

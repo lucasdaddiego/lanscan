@@ -4,8 +4,6 @@ Everything the package shells out to (ping/arp/ifconfig/networksetup/route, the
 network, mDNS) is mocked, so the suite runs hermetically on any platform — no
 root, no LAN, no macOS required.
 """
-from __future__ import annotations
-
 import argparse
 
 import pytest

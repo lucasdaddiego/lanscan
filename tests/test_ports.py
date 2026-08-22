@@ -2,8 +2,6 @@
 
 `asyncio.open_connection` is mocked throughout, so no real sockets are opened.
 """
-from __future__ import annotations
-
 import asyncio
 import errno
 
@@ -25,20 +23,33 @@ class FakeWriter:
             raise self._wait_exc
 
 
-def _conn_returning(writer):
-    async def _conn(host, port, **kw):
-        return (object(), writer)
-    return _conn
-
-
-def _conn_raising(exc):
-    async def _conn(host, port, **kw):
-        raise exc
-    return _conn
-
-
 def _sem():
     return asyncio.Semaphore(8)
+
+
+def test_port_tables_are_consistent():
+    # Every named port has a category, and every web port has a name.
+    assert set(ports.PORT_NAMES.values()) <= set(ports.PORT_CATEGORY)
+    web = (*ports.HTTP_PORTS, *ports.HTTPS_PORTS)
+    assert set(web) <= set(ports.PORT_NAMES)
+    assert len(set(web)) == len(web)                       # no duplicates
+    assert set(ports.PORT_NAMES) <= set(ports.COMMON_PORTS)  # names only for scanned ports
+
+
+async def test_open_ports_bounded_by_semaphore(monkeypatch):
+    sem = asyncio.Semaphore(2)
+    peak = {"now": 0, "max": 0}
+
+    async def fake_check(ip, port, timeout):
+        peak["now"] += 1
+        peak["max"] = max(peak["max"], peak["now"])
+        await asyncio.sleep(0)
+        peak["now"] -= 1
+        return True
+
+    monkeypatch.setattr(ports, "_check_one", fake_check)
+    assert await ports.open_ports("1.2.3.4", 0.1, sem, ports=(1, 2, 3, 4, 5)) == [1, 2, 3, 4, 5]
+    assert peak["max"] <= 2
 
 
 async def _no_sleep(*a, **k):
@@ -46,34 +57,12 @@ async def _no_sleep(*a, **k):
     return None
 
 
-# ---- _is_open -------------------------------------------------------------
-async def test_is_open_true(monkeypatch):
-    writer = FakeWriter()
-    monkeypatch.setattr("asyncio.open_connection", _conn_returning(writer))
-    assert await ports._is_open("1.2.3.4", 80, 0.1, _sem()) is True
-    assert writer.closed is True
-
-
-async def test_is_open_wait_closed_oserror_suppressed(monkeypatch):
-    monkeypatch.setattr("asyncio.open_connection",
-                        _conn_returning(FakeWriter(wait_exc=OSError("reset"))))
-    assert await ports._is_open("1.2.3.4", 80, 0.1, _sem()) is True
-
-
-@pytest.mark.parametrize("exc", [
-    ConnectionRefusedError(), asyncio.TimeoutError(), OSError("down"),
-])
-async def test_is_open_false_on_errors(monkeypatch, exc):
-    monkeypatch.setattr("asyncio.open_connection", _conn_raising(exc))
-    assert await ports._is_open("1.2.3.4", 80, 0.1, _sem()) is False
-
-
 # ---- open_ports -----------------------------------------------------------
 async def test_open_ports_returns_sorted_open(monkeypatch):
-    async def fake_is_open(ip, port, timeout, sem):
+    async def fake_check(ip, port, timeout):
         return port in {22, 443}
 
-    monkeypatch.setattr(ports, "_is_open", fake_is_open)
+    monkeypatch.setattr(ports, "_check_one", fake_check)
     res = await ports.open_ports("1.2.3.4", 0.1, _sem(), ports=(80, 443, 22))
     assert res == [443, 22]  # order follows the input tuple, filtered to open
 
@@ -146,7 +135,7 @@ async def test_check_one_success_wait_closed_oserror(monkeypatch):
     assert await ports._check_one("1.2.3.4", 80, 0.1) is True
 
 
-@pytest.mark.parametrize("exc", [ConnectionRefusedError(), asyncio.TimeoutError()])
+@pytest.mark.parametrize("exc", [ConnectionRefusedError(), TimeoutError()])
 async def test_check_one_refused_or_timeout(monkeypatch, exc):
     conn, _ = _seq_conn([exc])
     monkeypatch.setattr("asyncio.open_connection", conn)

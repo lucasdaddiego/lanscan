@@ -5,8 +5,6 @@ Browses the network for advertised services and maps them back to IPs, turning
 background and is read by the scan engine through `snapshot()`. Best-effort: any
 failure here degrades to no mDNS data rather than breaking the scan.
 """
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -16,8 +14,6 @@ from zeroconf import ServiceStateChange
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 
 logging.getLogger("zeroconf").setLevel(logging.ERROR)
-
-_META = "_services._dns-sd._udp.local."
 
 # Friendly labels for common service types (keyed without the .local. suffix).
 _LABELS: dict[str, str] = {
@@ -35,13 +31,9 @@ _LABELS: dict[str, str] = {
     "_rfb._tcp": "Screen-Share", "_daap._tcp": "iTunes", "_touch-able._tcp": "Apple-Remote",
 }
 
-# A curated subset to browse immediately (don't wait for meta-enumeration).
-_PREBROWSE = [f"{t}.local." for t in (
-    "_airplay._tcp", "_raop._tcp", "_googlecast._tcp", "_ipp._tcp", "_printer._tcp",
-    "_ssh._tcp", "_smb._tcp", "_homekit._tcp", "_hap._tcp", "_sonos._tcp",
-    "_spotify-connect._tcp", "_http._tcp", "_device-info._tcp", "_workstation._tcp",
-    "_companion-link._tcp",
-)]
+# Everything we can label is browsed from the start by a single browser (one
+# query schedule for all types), so there's no meta-type enumeration to wait on.
+_TYPES = [f"{t}.local." for t in _LABELS]
 
 
 def _friendly_from_txt(info: AsyncServiceInfo) -> str | None:
@@ -53,7 +45,7 @@ def _friendly_from_txt(info: AsyncServiceInfo) -> str | None:
         if val:
             try:
                 s = val.decode("utf-8", "replace").strip()
-            except Exception:  # noqa: BLE001
+            except Exception:  # odd TXT value type — skip it
                 continue
             if s:
                 return s
@@ -80,30 +72,15 @@ class MdnsDiscovery:
     def __init__(self) -> None:
         self._azc: AsyncZeroconf | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._browsers: list[AsyncServiceBrowser] = []
-        self._types: set[str] = set()
+        self._browser: AsyncServiceBrowser | None = None
         self._by_ip: dict[str, dict] = {}
         self._by_name: dict[str, dict] = {}  # instance -> {ips, label, instance}
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._azc = AsyncZeroconf()
-        self._browsers.append(
-            AsyncServiceBrowser(self._azc.zeroconf, _META, handlers=[self._on_meta]))
-        for t in _PREBROWSE:
-            self._add_type(t)
-
-    def _add_type(self, service_type: str) -> None:
-        if service_type in self._types or not self._azc:
-            return
-        self._types.add(service_type)
-        self._browsers.append(
-            AsyncServiceBrowser(self._azc.zeroconf, service_type, handlers=[self._on_service]))
-
-    def _on_meta(self, zeroconf, service_type, name, state_change, **_) -> None:
-        # In the meta browser, each "name" is itself a service type to browse.
-        if state_change is ServiceStateChange.Added and self._loop:
-            self._loop.call_soon_threadsafe(self._add_type, name)
+        self._browser = AsyncServiceBrowser(self._azc.zeroconf, _TYPES,
+                                            handlers=[self._on_service])
 
     def _on_service(self, zeroconf, service_type, name, state_change, **_) -> None:
         if not self._loop:
@@ -116,9 +93,7 @@ class MdnsDiscovery:
     async def _resolve(self, service_type: str, name: str) -> None:
         try:
             key = service_type.removesuffix(".local.").removesuffix(".")
-            label = _LABELS.get(key)
-            if label is None:
-                return  # ignore obscure/internal service types for a clean view
+            label = _LABELS.get(key, key)  # we only browse labelled types
             info = AsyncServiceInfo(service_type, name)
             if not await info.async_request(self._azc.zeroconf, 2500):
                 return
@@ -140,7 +115,7 @@ class MdnsDiscovery:
                 if added:
                     entry["instances"].add(added)
                 entry["name"] = _best_name(entry["instances"])
-        except Exception:  # noqa: BLE001 - never let discovery crash a scan
+        except Exception:  # never let discovery crash a scan
             return
 
     def _forget(self, name: str) -> None:
@@ -170,9 +145,9 @@ class MdnsDiscovery:
                 for ip, v in self._by_ip.items()}
 
     async def stop(self) -> None:
-        for b in self._browsers:
+        if self._browser:
             with contextlib.suppress(Exception):
-                await b.async_cancel()
+                await self._browser.async_cancel()
         if self._azc:
             with contextlib.suppress(Exception):
                 await self._azc.async_close()

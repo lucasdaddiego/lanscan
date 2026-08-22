@@ -9,21 +9,15 @@ macOS reads `networksetup`/`ifconfig`/`route`; Linux reads `ip` and
 `/proc/net/wireless`. The orchestrator (`discover_interfaces`) is shared — only
 the three data sources (ports, interface facts, gateway) dispatch per platform.
 """
-from __future__ import annotations
-
+import contextlib
 import ipaddress
 import re
 import subprocess
-import sys
 
 import ifaddr
 
+from ._platform import is_linux
 from .models import Interface
-
-
-def _is_linux() -> bool:
-    return sys.platform.startswith("linux")
-
 
 # Hardware-port name -> our coarse "kind". We classify by the friendly port name
 # reported by `networksetup`, which cleanly separates Wi-Fi/Ethernet from the
@@ -46,7 +40,7 @@ def _classify(port: str) -> str | None:
 def _hardware_ports() -> dict[str, tuple[str, str]]:
     """device -> (friendly port name, kind). Re-read each scan so a newly
     plugged-in adapter (a brand-new port) is picked up, not just new addresses."""
-    return _hardware_ports_linux() if _is_linux() else _hardware_ports_macos()
+    return _hardware_ports_linux() if is_linux() else _hardware_ports_macos()
 
 
 def _hardware_ports_macos() -> dict[str, tuple[str, str]]:
@@ -146,7 +140,7 @@ def _hardware_ports_linux() -> dict[str, tuple[str, str]]:
 
 
 def default_gateway() -> str | None:
-    return _default_gateway_linux() if _is_linux() else _default_gateway_macos()
+    return _default_gateway_linux() if is_linux() else _default_gateway_macos()
 
 
 def _default_gateway_macos() -> str | None:
@@ -190,7 +184,7 @@ def _is_virtual_name(device: str) -> bool:
 def _ifconfig_facts() -> tuple[set[str], set[str], dict[str, str]]:
     """(bridge members, virtual-owned subnets, device->MAC) — used to exclude
     virtual networks. macOS reads `ifconfig`; Linux reads `ip`."""
-    return _ifconfig_facts_linux() if _is_linux() else _ifconfig_facts_macos()
+    return _ifconfig_facts_linux() if is_linux() else _ifconfig_facts_macos()
 
 
 def _ifconfig_facts_macos() -> tuple[set[str], set[str], dict[str, str]]:
@@ -260,10 +254,8 @@ def _ifconfig_facts_linux() -> tuple[set[str], set[str], dict[str, str]]:
         # "<idx>: <dev> inet <addr>/<prefix> ..." — only virtual-named devices.
         if len(parts) < 4 or parts[2] != "inet" or not _is_virtual_name(parts[1]):
             continue
-        try:
+        with contextlib.suppress(ValueError):
             virtual_subnets.add(str(ipaddress.ip_network(parts[3], strict=False)))
-        except ValueError:
-            pass
     return members, virtual_subnets, macs
 
 
@@ -308,17 +300,6 @@ def discover_interfaces(only_device: str | None = None,
             ))
     found.sort(key=lambda i: (i.kind != "wifi", i.device))  # Wi-Fi first
     return found
-
-
-def broadcast_set(interfaces: list[Interface]) -> set[str]:
-    """Subnet broadcast addresses for the given interfaces (to exclude from results)."""
-    out: set[str] = set()
-    for iface in interfaces:
-        try:
-            out.add(str(ipaddress.ip_network(iface.cidr).broadcast_address))
-        except ValueError:
-            pass
-    return out
 
 
 # Subnets larger than this (a /22 = 1024 addresses) are skipped: actively

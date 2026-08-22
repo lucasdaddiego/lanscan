@@ -4,8 +4,6 @@ Two layers: pure renderable helpers (exercised on an unmounted app instance) and
 behaviour driven through Textual's ``run_test()`` pilot with the scan engine and
 mDNS mocked out.
 """
-from __future__ import annotations
-
 import asyncio
 import time
 
@@ -206,6 +204,34 @@ def test_detail_identity_and_history_rows():
     assert time.strftime("%b %d", time.localtime(dev.first_seen)) in out
 
 
+def test_detail_marks_a_remembered_name():
+    app = bare_app()
+    dev = Device(ip="192.168.0.8", remembered_name="Kettle")
+    app._devices = [dev]
+    out = render(app._detail_renderable(dev))
+    assert "Kettle  (last known)" in out
+    dev.mdns_name = "Kettle"                               # live name again -> plain
+    assert "(last known)" not in render(app._detail_renderable(dev))
+
+
+async def test_no_history_still_tracks_the_session(monkeypatch):
+    saves = []
+    monkeypatch.setattr(tui.history, "load", lambda: {"X": {}})
+    monkeypatch.setattr(tui.history, "save", lambda recs: saves.append(recs))
+    dev = Device(ip="192.168.0.5", mac="AA:BB")
+    app = make_app(monkeypatch, devices=[dev], no_history=True)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app._history == {}                          # nothing loaded from disk
+        await run_scan(app, pilot)
+        first = dev.first_seen
+        assert dev.ever_seen is False
+        await run_scan(app, pilot)
+        assert dev.first_seen == first                     # stable across refreshes
+        assert dev.ever_seen is True                       # seen earlier this session
+    assert saves == []                                     # never written to disk
+
+
 def test_detail_scanning_zero_total():
     app = bare_app()
     dev = Device(ip="192.168.0.32", open_ports=[])
@@ -370,6 +396,32 @@ async def test_tick_spin(monkeypatch):
         app._scanning = False
         app._scanned_once = False
         app._tick_spin()
+
+
+async def test_spinner_timer_pauses_when_idle_and_wakes_on_activity(monkeypatch):
+    app = make_app(monkeypatch)
+    async with app.run_test() as pilot:
+        await run_scan(app, pilot)
+        app._tick_spin()                                   # idle after a scan
+        assert not app._spin_timer._active.is_set()        # -> timer paused
+        app._paused = True
+        app._trigger_scan()                                # even a refused trigger...
+        assert app._spin_timer._active.is_set()            # ...wakes it
+        app._tick_spin()
+        assert not app._spin_timer._active.is_set()
+        app._paused = False
+        app._fullscan = ("192.168.0.1", 0, 1)
+        app._wake_spinner()
+        assert app._spin_timer._active.is_set()
+        app._tick_spin()                                   # active -> stays awake
+        assert app._spin_timer._active.is_set()
+
+
+def test_spinner_helpers_tolerate_unmounted_app():
+    app = bare_app()                                       # no timer yet
+    app._scanned_once = True
+    app._tick_spin()                                       # idle + no timer -> no-op
+    app._wake_spinner()
 
 
 async def test_on_progress(monkeypatch):

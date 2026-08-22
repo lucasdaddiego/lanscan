@@ -1,6 +1,4 @@
 """Tests for lanscan.__main__ (CLI entry point) and the package __init__."""
-from __future__ import annotations
-
 import lanscan
 from lanscan import __main__ as main_mod
 

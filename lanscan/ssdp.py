@@ -1,17 +1,19 @@
 """SSDP / UPnP discovery — find devices that announce themselves over UPnP.
 
-A one-shot M-SEARCH burst per scan: multicast the discovery request to the SSDP
-group, collect the unicast 200-OK replies, and read each device's `SERVER` string
-plus (best-effort) its friendlyName / manufacturer / model from the `LOCATION`
-description XML. Smart TVs, media renderers, routers, NAS boxes and a lot of IoT
-kit show up here. Best-effort throughout — any failure yields no UPnP data rather
-than breaking the scan. No root, no extra dependencies.
+One M-SEARCH burst per scan: multicast the discovery request to the SSDP group
+out of *every* scanned interface (a multicast send otherwise leaves only via the
+default route, so Ethernet-side devices would be missed while Wi-Fi holds the
+default), sent twice to ride out UDP loss, then collect the unicast 200-OK
+replies and read each device's `SERVER` string plus (best-effort) its
+friendlyName / manufacturer / model from the `LOCATION` description XML. Smart
+TVs, media renderers, routers, NAS boxes and a lot of IoT kit show up here.
+Best-effort throughout — any failure yields no UPnP data rather than breaking
+the scan. No root, no extra dependencies.
 """
-from __future__ import annotations
-
 import asyncio
 import re
 import socket
+from collections.abc import Iterable
 from urllib.parse import urlparse
 
 from . import banners
@@ -53,16 +55,17 @@ class _Collector(asyncio.DatagramProtocol):
             self.responses[ip] = headers
 
 
-_TAG_CACHE: dict[str, re.Pattern[bytes]] = {}
+def _tag_re(tag: str) -> re.Pattern[bytes]:
+    return re.compile(rf"<{tag}>(.*?)</{tag}>".encode(), re.IGNORECASE | re.DOTALL)
+
+
+# The three description-XML tags we read (namespace-free, case-insensitive).
+_TAGS = {t: _tag_re(t) for t in ("friendlyName", "manufacturer", "modelName")}
 
 
 def _xml_tag(xml: bytes, tag: str) -> str | None:
-    """First value of a (namespace-free) XML tag, whitespace-collapsed."""
-    pat = _TAG_CACHE.get(tag)
-    if pat is None:
-        pat = re.compile(rf"<{tag}>(.*?)</{tag}>".encode(), re.IGNORECASE | re.DOTALL)
-        _TAG_CACHE[tag] = pat
-    m = pat.search(xml)
+    """First value of a description-XML tag, whitespace-collapsed."""
+    m = _TAGS[tag].search(xml)
     if not m:
         return None
     text = " ".join(m.group(1).decode("utf-8", "replace").split())
@@ -99,24 +102,68 @@ async def _enrich(ip: str, info: dict, *, timeout: float) -> None:
     info["model"] = " ".join(p for p in (manuf, model) if p) or None
 
 
-async def probe(timeout: float = 2.0, *, fetch_details: bool = True) -> dict[str, dict]:
-    """Run an M-SEARCH and return ``{ip: {server, location, name, model}}``."""
-    loop = asyncio.get_running_loop()
+def _multicast_socket(local_ip: str | None) -> socket.socket:
+    """A UDP socket whose multicast egress is pinned to `local_ip` — replies come
+    back unicast to that address — or left to the default route when None."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        transport, proto = await loop.create_datagram_endpoint(
-            _Collector, local_addr=("0.0.0.0", 0), family=socket.AF_INET)
+        sock.setblocking(False)
+        if local_ip:
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
+                            socket.inet_aton(local_ip))
+        sock.bind((local_ip or "0.0.0.0", 0))
     except OSError:
+        sock.close()
+        raise
+    return sock
+
+
+async def _open_transports(loop: asyncio.AbstractEventLoop, collector: _Collector,
+                           local_ips: Iterable[str]) -> list[asyncio.DatagramTransport]:
+    """One transport per interface address (all feeding `collector`); if none of
+    those can be opened, a single default-route transport as a last resort."""
+    transports: list[asyncio.DatagramTransport] = []
+    candidates: list[str | None] = list(local_ips) or [None]
+    while candidates:
+        local_ip = candidates.pop(0)
+        try:
+            sock = _multicast_socket(local_ip)
+            transport, _ = await loop.create_datagram_endpoint(lambda: collector, sock=sock)
+        except OSError:
+            if not candidates and not transports and local_ip is not None:
+                candidates.append(None)  # every pinned socket failed: try unpinned
+            continue
+        transports.append(transport)
+    return transports
+
+
+async def probe(local_ips: Iterable[str] = (), *, timeout: float = 2.0,
+                fetch_details: bool = True) -> dict[str, dict]:
+    """M-SEARCH out of each `local_ips` interface (or the default route when none
+    are given) and return ``{ip: {server, location, name, model}}``.
+
+    `timeout` is the whole reply window: the request goes out at t=0 and again at
+    t=timeout/4 (UDP loss), and with MX: 1 every reply is due within a second of
+    the request it answers.
+    """
+    loop = asyncio.get_running_loop()
+    collector = _Collector()
+    transports = await _open_transports(loop, collector, local_ips)
+    if not transports:
         return {}
     try:
-        transport.sendto(_MSEARCH, (_SSDP_ADDR, _SSDP_PORT))
-        await asyncio.sleep(timeout)
+        for wait in (timeout * 0.25, timeout * 0.75):
+            for transport in transports:
+                transport.sendto(_MSEARCH, (_SSDP_ADDR, _SSDP_PORT))
+            await asyncio.sleep(wait)
     finally:
-        transport.close()
+        for transport in transports:
+            transport.close()
 
     result: dict[str, dict] = {
         ip: {"server": h.get("server"), "location": h.get("location"),
              "name": None, "model": None}
-        for ip, h in proto.responses.items()
+        for ip, h in collector.responses.items()
     }
     if fetch_details and result:
         await asyncio.gather(

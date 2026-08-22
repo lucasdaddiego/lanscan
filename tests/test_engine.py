@@ -3,27 +3,12 @@
 The OS shell-outs (ping, arp) and all sockets are mocked, so the orchestration
 logic is exercised without touching the network.
 """
-from __future__ import annotations
-
 import asyncio
 
 import pytest
 
 from lanscan import engine
 from lanscan.models import Interface
-
-
-class FakeWriter:
-    def __init__(self, wait_exc=None):
-        self.closed = False
-        self._wait_exc = wait_exc
-
-    def close(self):
-        self.closed = True
-
-    async def wait_closed(self):
-        if self._wait_exc:
-            raise self._wait_exc
 
 
 class FakeProc:
@@ -74,7 +59,7 @@ async def test_ping_timeout_kills_proc(monkeypatch):
     async def fake_wait_for(awaitable, timeout):
         if asyncio.iscoroutine(awaitable):
             awaitable.close()  # avoid "coroutine never awaited"
-        raise asyncio.TimeoutError
+        raise TimeoutError
 
     monkeypatch.setattr(engine.asyncio, "wait_for", fake_wait_for)
     ip, ok = await engine._ping("10.0.0.9", 0.1, asyncio.Semaphore(2))
@@ -107,61 +92,155 @@ async def test_ping_cancel_tolerates_already_exited_proc(monkeypatch):
         await task                     # ProcessLookupError must not mask the cancel
 
 
-# ---- _port_up -------------------------------------------------------------
-async def test_port_up_true(monkeypatch):
-    monkeypatch.setattr("asyncio.open_connection",
-                        lambda h, p: _coro((object(), FakeWriter())))
-    assert await engine._port_up("10.0.0.9", 80, 0.1) is True
+# ---- ICMP socket sweep ----------------------------------------------------
+def _words_sum(pkt: bytes) -> int:
+    total = sum(int.from_bytes(pkt[i:i + 2], "big") for i in range(0, len(pkt), 2))
+    total = (total >> 16) + (total & 0xFFFF)
+    return (total + (total >> 16)) & 0xFFFF
 
 
-async def test_port_up_wait_closed_oserror(monkeypatch):
-    monkeypatch.setattr("asyncio.open_connection",
-                        lambda h, p: _coro((object(), FakeWriter(wait_exc=OSError()))))
-    assert await engine._port_up("10.0.0.9", 80, 0.1) is True
+def test_checksum_known_vectors():
+    assert engine._checksum(b"") == 0xFFFF
+    assert engine._checksum(b"\x00\x01") == 0xFFFE
+    assert engine._checksum(b"\xff\xff\x00\x02") == 0xFFFD   # folds the carry back in
+    assert engine._checksum(b"\x01") == 0xFEFF               # odd length is zero-padded
 
 
-async def test_port_up_refused_counts_as_up(monkeypatch):
-    monkeypatch.setattr("asyncio.open_connection",
-                        lambda h, p: _raise_coro(ConnectionRefusedError()))
-    assert await engine._port_up("10.0.0.9", 80, 0.1) is True
+def test_echo_request_is_well_formed():
+    pkt = engine._echo_request(0x1_0007)   # seq is masked to 16 bits
+    assert len(pkt) == 8 + len(engine._ECHO_PAYLOAD)
+    assert pkt[0] == engine._ICMP_ECHO_REQUEST and pkt[1] == 0
+    assert int.from_bytes(pkt[6:8], "big") == 7
+    assert _words_sum(pkt) == 0xFFFF       # a valid checksum sums to all-ones
 
 
-@pytest.mark.parametrize("exc", [asyncio.TimeoutError(), OSError()])
-async def test_port_up_down(monkeypatch, exc):
-    monkeypatch.setattr("asyncio.open_connection", lambda h, p: _raise_coro(exc))
-    assert await engine._port_up("10.0.0.9", 80, 0.1) is False
+@pytest.mark.parametrize("data,alive", [
+    (b"\x45" + b"\0" * 19 + b"\x00\x00\x00\x00", True),     # macOS: IP header + reply
+    (b"\x00\x00\x00\x00\x00\x00\x00\x00", True),             # Linux: bare reply
+    (b"\x45" + b"\0" * 19 + b"\x08\x00", False),             # an echo *request*
+    (b"\x45" + b"\0" * 19, False),                            # header only, no ICMP
+    (b"", False),                                              # empty datagram
+])
+def test_echo_collector_parses_both_framings(data, alive):
+    proto = engine._EchoCollector()
+    proto.datagram_received(data, ("10.0.0.9", 0))
+    assert ("10.0.0.9" in proto.alive) is alive
 
 
-async def _coro(value):
-    return value
+class FakeSock:
+    def __init__(self):
+        self.blocking = None
+        self.closed = False
+
+    def setblocking(self, flag):
+        self.blocking = flag
+
+    def close(self):
+        self.closed = True
 
 
-async def _raise_coro(exc):
-    raise exc
+def test_icmp_socket_refused(monkeypatch):
+    def _boom(*a, **k):
+        raise PermissionError("ping_group_range")
+
+    monkeypatch.setattr(engine.socket, "socket", _boom)
+    assert engine._icmp_socket() is None
 
 
-# ---- _tcp_alive -----------------------------------------------------------
-async def test_tcp_alive_any_port_up(monkeypatch):
-    async def fake_port_up(ip, port, timeout):
-        return port == engine._TCP_PORTS[-1]  # only the last probe answers
-
-    monkeypatch.setattr(engine, "_port_up", fake_port_up)
-    assert await engine._tcp_alive("10.0.0.9", 0.1, asyncio.Semaphore(4)) == ("10.0.0.9", True)
+def test_icmp_socket_is_non_blocking(monkeypatch):
+    sock = FakeSock()
+    monkeypatch.setattr(engine.socket, "socket", lambda *a, **k: sock)
+    assert engine._icmp_socket() is sock
+    assert sock.blocking is False
 
 
-async def test_tcp_alive_all_down(monkeypatch):
-    async def fake_port_up(ip, port, timeout):
-        return False
+class FakeTransport:
+    def __init__(self):
+        self.sent = []
+        self.closed = False
 
-    monkeypatch.setattr(engine, "_port_up", fake_port_up)
-    assert await engine._tcp_alive("10.0.0.9", 0.1, asyncio.Semaphore(4)) == ("10.0.0.9", False)
+    def sendto(self, data, addr):
+        self.sent.append((data, addr))
+
+    def close(self):
+        self.closed = True
+
+
+def _patch_icmp_endpoint(monkeypatch, *, replies=(), exc=None):
+    """Fake the datagram endpoint; `replies` are pre-loaded into the collector."""
+    loop = asyncio.get_running_loop()
+    transport = FakeTransport()
+    sock = FakeSock()
+    monkeypatch.setattr(engine, "_icmp_socket", lambda: sock)
+
+    async def fake_cde(factory, **kw):
+        if exc:
+            raise exc
+        proto = factory()
+        proto.alive.update(replies)
+        return transport, proto
+
+    monkeypatch.setattr(loop, "create_datagram_endpoint", fake_cde)
+    return transport, sock
+
+
+async def test_icmp_sweep_no_socket(monkeypatch):
+    monkeypatch.setattr(engine, "_icmp_socket", lambda: None)
+    assert await engine._icmp_sweep(["10.0.0.1"], 0.01, None) is None
+
+
+async def test_icmp_sweep_endpoint_error_closes_socket(monkeypatch):
+    _, sock = _patch_icmp_endpoint(monkeypatch, exc=OSError("no"))
+    assert await engine._icmp_sweep(["10.0.0.1"], 0.01, None) is None
+    assert sock.closed is True
+
+
+async def test_icmp_sweep_sends_every_target_and_filters_replies(monkeypatch):
+    targets = [f"10.0.0.{n}" for n in range(1, 70)]   # > one send batch
+    transport, _ = _patch_icmp_endpoint(
+        monkeypatch, replies={"10.0.0.5", "10.0.0.9", "192.168.9.9"})  # last one foreign
+    progress = []
+    alive = await engine._icmp_sweep(targets, 0.05, lambda d, t: progress.append((d, t)))
+    assert alive == {"10.0.0.5", "10.0.0.9"}
+    assert [addr for _, addr in transport.sent] == [(ip, 0) for ip in targets]
+    assert transport.closed is True
+    assert progress and progress[-1][1] == len(targets)
+    assert all(0 <= d <= t for d, t in progress)
+
+
+async def test_icmp_sweep_ends_early_when_everyone_answered(monkeypatch):
+    _patch_icmp_endpoint(monkeypatch, replies={"10.0.0.1", "10.0.0.2"})
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    assert await engine._icmp_sweep(["10.0.0.1", "10.0.0.2"], 5.0, None) == {"10.0.0.1", "10.0.0.2"}
+    assert loop.time() - t0 < 1.0        # did not wait out the 5s window
+
+
+async def test_icmp_sweep_waits_out_the_window_without_progress(monkeypatch):
+    _patch_icmp_endpoint(monkeypatch, replies=set())
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    assert await engine._icmp_sweep(["10.0.0.1"], 0.05, None) == set()
+    assert loop.time() - t0 >= 0.04          # several 0.1s-capped sleeps, no callback
+
+
+async def test_ping_sweep_collects_and_reports(monkeypatch):
+    async def fake_ping(ip, timeout, sem):
+        return ip, ip.endswith(".1")
+
+    monkeypatch.setattr(engine, "_ping", fake_ping)
+    progress = []
+    alive = await engine._ping_sweep(["10.0.0.1", "10.0.0.2"], 0.1, 4,
+                                     lambda d, t: progress.append((d, t)))
+    assert alive == {"10.0.0.1"}
+    assert progress == [(1, 2), (2, 2)]
 
 
 # ---- _reverse_dns ---------------------------------------------------------
 async def test_reverse_dns_success(monkeypatch):
     monkeypatch.setattr(engine.socket, "gethostbyaddr",
                         lambda ip: ("host.local", [], [ip]))
-    assert await engine._reverse_dns("10.0.0.9", asyncio.Semaphore(4)) == ("10.0.0.9", "host.local")
+    assert await engine._reverse_dns("10.0.0.9", 1.0) == ("10.0.0.9", "host.local")
 
 
 async def test_reverse_dns_failure(monkeypatch):
@@ -169,7 +248,17 @@ async def test_reverse_dns_failure(monkeypatch):
         raise OSError("no PTR")
 
     monkeypatch.setattr(engine.socket, "gethostbyaddr", _boom)
-    assert await engine._reverse_dns("10.0.0.9", asyncio.Semaphore(4)) == ("10.0.0.9", None)
+    assert await engine._reverse_dns("10.0.0.9", 1.0) == ("10.0.0.9", None)
+
+
+def test_rdns_pool_is_a_singleton(monkeypatch):
+    monkeypatch.setattr(engine, "_RDNS_POOL", None)
+    pool = engine._rdns_pool()
+    try:
+        assert engine._rdns_pool() is pool
+        assert pool._max_workers == engine._RDNS_WORKERS
+    finally:
+        pool.shutdown(wait=False)
 
 
 # ---- read_arp -------------------------------------------------------------
@@ -187,7 +276,7 @@ this line does not match the arp pattern at all
 
 def test_read_arp_filters(monkeypatch):
     from types import SimpleNamespace
-    monkeypatch.setattr(engine, "_is_linux", lambda: False)
+    monkeypatch.setattr(engine, "is_linux", lambda: False)
     targets = {f"192.168.0.{n}": "en0" for n in (1, 2, 5, 7, 9)}
     targets["224.0.0.251"] = "en0"
     monkeypatch.setattr(engine.subprocess, "run",
@@ -213,7 +302,7 @@ fe80::1 dev eth0 lladdr de:ad:be:ef:00:01 REACHABLE
 
 def test_read_arp_linux(monkeypatch):
     from types import SimpleNamespace
-    monkeypatch.setattr(engine, "_is_linux", lambda: True)
+    monkeypatch.setattr(engine, "is_linux", lambda: True)
     targets = {f"192.168.0.{n}": "eth0" for n in (1, 2, 5)}
     targets["224.0.0.251"] = "eth0"
     captured = {}
@@ -240,28 +329,9 @@ def test_read_arp_error(monkeypatch):
 
 @pytest.mark.parametrize("linux,flag", [(True, "-W"), (False, "-t")])
 def test_ping_argv(monkeypatch, linux, flag):
-    monkeypatch.setattr(engine, "_is_linux", lambda: linux)
+    monkeypatch.setattr(engine, "is_linux", lambda: linux)
     assert engine._ping_argv("10.0.0.9", 2.5) == ["ping", "-c", "1", flag, "2", "10.0.0.9"]
 
-
-def test_is_linux_reads_platform(monkeypatch):
-    monkeypatch.setattr(engine.sys, "platform", "linux2")
-    assert engine._is_linux() is True
-    monkeypatch.setattr(engine.sys, "platform", "darwin")
-    assert engine._is_linux() is False
-
-
-# ---- _is_host -------------------------------------------------------------
-@pytest.mark.parametrize("ip,broadcasts,ok", [
-    ("192.168.0.5", set(), True),
-    ("224.0.0.1", set(), False),          # multicast
-    ("0.0.0.0", set(), False),            # unspecified
-    ("192.168.0.255", {"192.168.0.255"}, False),  # known broadcast
-    ("255.255.255.255", set(), False),    # all-ones broadcast
-    ("not-an-ip", set(), False),          # unparseable
-])
-def test_is_host(ip, broadcasts, ok):
-    assert engine._is_host(ip, broadcasts) is ok
 
 
 # ---- scan (the orchestrator) ---------------------------------------------
@@ -275,14 +345,14 @@ class FakeMdns:
         return {"192.168.0.1": {"name": "Router", "services": {"HTTP", "SSH"}}}
 
 
-def _install_scan_mocks(monkeypatch, *, targets, alive_icmp, arp_seq, tcp_alive,
-                        gateway="192.168.0.1", broadcasts=(), ssdp_snap=None,
-                        http_map=None):
+def _install_scan_mocks(monkeypatch, *, targets, alive_icmp, arp, gateway="192.168.0.1",
+                        ssdp_snap=None, http_map=None, icmp_socket=False):
+    """Mock every collaborator of scan(). `alive_icmp` answers via the `ping`
+    fallback by default; with icmp_socket=True the socket sweep returns it."""
     monkeypatch.setattr(engine.net, "hosts_for", lambda ifaces: dict(targets))
     monkeypatch.setattr(engine.net, "default_gateway", lambda: gateway)
-    monkeypatch.setattr(engine.net, "broadcast_set", lambda ifaces: set(broadcasts))
 
-    async def fake_ssdp_probe(timeout=2.0, **kw):
+    async def fake_ssdp_probe(local_ips=(), **kw):
         return dict(ssdp_snap or {})
 
     monkeypatch.setattr(engine.ssdp, "probe", fake_ssdp_probe)
@@ -292,26 +362,18 @@ def _install_scan_mocks(monkeypatch, *, targets, alive_icmp, arp_seq, tcp_alive,
 
     monkeypatch.setattr(engine.banners, "identify", fake_identify)
 
+    async def fake_icmp_sweep(sweep, timeout, progress):
+        return set(alive_icmp) if icmp_socket else None
+
+    monkeypatch.setattr(engine, "_icmp_sweep", fake_icmp_sweep)
+
     async def fake_ping(ip, timeout, sem):
         return (ip, ip in alive_icmp)
 
     monkeypatch.setattr(engine, "_ping", fake_ping)
+    monkeypatch.setattr(engine, "read_arp", lambda tg: dict(arp))
 
-    state = {"n": 0}
-
-    def fake_read_arp(tg):
-        idx = min(state["n"], len(arp_seq) - 1)
-        state["n"] += 1
-        return dict(arp_seq[idx])
-
-    monkeypatch.setattr(engine, "read_arp", fake_read_arp)
-
-    async def fake_tcp(ip, timeout, sem):
-        return (ip, ip in tcp_alive)
-
-    monkeypatch.setattr(engine, "_tcp_alive", fake_tcp)
-
-    async def fake_rdns(ip, sem):
+    async def fake_rdns(ip, timeout):
         return (ip, f"host-{ip}")
 
     monkeypatch.setattr(engine, "_reverse_dns", fake_rdns)
@@ -329,11 +391,11 @@ async def test_scan_empty_interfaces():
 
 async def test_scan_full(monkeypatch):
     targets = {f"192.168.0.{n}": "en0" for n in (10, 1, 2, 3)}
-    arp_first = {
+    arp = {
         "192.168.0.1": ("a0:bb:cc:dd:ee:f1", "en0"),
         "192.168.0.2": ("12:bb:cc:dd:ee:f2", "en0"),  # locally-administered -> randomized
+        "192.168.0.3": ("a0:bb:cc:dd:ee:f3", "en0"),  # ICMP-silent, ARP only
     }
-    arp_after_tcp = dict(arp_first, **{"192.168.0.3": ("a0:bb:cc:dd:ee:f3", "en0")})
     ssdp_snap = {
         "192.168.0.1": {"name": "My Router", "model": "Acme RT-1",
                         "server": "Linux UPnP/1.0"},
@@ -347,9 +409,7 @@ async def test_scan_full(monkeypatch):
         monkeypatch,
         targets=targets,
         alive_icmp={"192.168.0.1"},
-        arp_seq=[arp_first, arp_after_tcp],
-        tcp_alive={"192.168.0.3"},
-        broadcasts={"192.168.0.255"},
+        arp=arp,
         ssdp_snap=ssdp_snap,
         http_map=http_map,
     )
@@ -380,7 +440,7 @@ async def test_scan_full(monkeypatch):
     assert by_ip["192.168.0.2"].randomized_mac is True
     assert by_ip["192.168.0.2"].upnp_name is None
     assert by_ip["192.168.0.2"].upnp_model == "Roku UPnP/1.0"   # SERVER fallback
-    assert by_ip["192.168.0.3"].via == "tcp"
+    assert by_ip["192.168.0.3"].via == "arp"
     assert by_ip["192.168.0.3"].http_server is None
     assert by_ip["192.168.0.3"].http_title == "Cam"
 
@@ -393,14 +453,13 @@ async def test_scan_full(monkeypatch):
     assert (0, 3) in progress and (3, 3) in progress  # 3 swept (self excluded)
 
 
-async def test_scan_flags_off_and_no_tcp_hit(monkeypatch):
-    # self=.1, sweep=[.2]; .2 is ICMP-silent, ARP-absent, TCP-down -> dropped.
+async def test_scan_flags_off_and_silent_host_dropped(monkeypatch):
+    # self=.1, sweep=[.2]; .2 is ICMP-silent and ARP-absent -> not on the link.
     _install_scan_mocks(
         monkeypatch,
         targets={"192.168.0.1": "en0", "192.168.0.2": "en0"},
         alive_icmp=set(),
-        arp_seq=[{}],
-        tcp_alive=set(),
+        arp={},
         gateway=None,
     )
     devices = await engine.scan([_iface()], resolve=False, mdns=None,
@@ -428,7 +487,7 @@ async def test_scan_cancel_stops_the_ping_sweep(monkeypatch):
     _install_scan_mocks(
         monkeypatch,
         targets={f"192.168.0.{n}": "en0" for n in (1, 2, 3, 4, 5)},
-        alive_icmp=set(), arp_seq=[{}], tcp_alive=set(),
+        alive_icmp=set(), arp={},
     )
     monkeypatch.setattr(engine, "_ping", slow_ping)   # after the mocks, which set it too
     task = asyncio.create_task(engine.scan(
@@ -445,16 +504,23 @@ async def test_scan_cancel_stops_the_ping_sweep(monkeypatch):
     assert [t for t in asyncio.all_tasks() if t.get_coro().__name__ == "slow_ping"] == []
 
 
-async def test_scan_skips_tcp_when_nothing_missing(monkeypatch):
-    # The only swept host answers ICMP, so `missing` is empty and the whole
-    # TCP-fallback block is skipped.
+async def test_scan_uses_icmp_socket_sweep_when_available(monkeypatch):
+    # The socket sweep answers, so the `ping` fallback must not run at all.
     _install_scan_mocks(
         monkeypatch,
-        targets={"192.168.0.2": "en0"},
+        targets={"192.168.0.2": "en0", "192.168.0.3": "en0"},
         alive_icmp={"192.168.0.2"},
-        arp_seq=[{"192.168.0.2": ("a0:bb:cc:dd:ee:f2", "en0")}],
-        tcp_alive=set(),
+        arp={"192.168.0.2": ("a0:bb:cc:dd:ee:f2", "en0")},
+        icmp_socket=True,
     )
-    devices = await engine.scan([_iface()], resolve=False, mdns=None,
-                                scan_ports=False, timeout=0.1)
-    assert {d.ip for d in devices} == {"192.168.0.2", "192.168.0.10"}
+
+    async def must_not_ping(*a, **k):
+        raise AssertionError("ping fallback ran despite a working ICMP socket")
+
+    monkeypatch.setattr(engine, "_ping", must_not_ping)
+    progress = []
+    devices = await engine.scan([_iface()], resolve=False, mdns=None, ssdp_enabled=False,
+                                scan_ports=False, http_id=False, timeout=0.1,
+                                progress=lambda d, t: progress.append((d, t)))
+    assert {d.ip: d.via for d in devices} == {"192.168.0.2": "icmp", "192.168.0.10": "self"}
+    assert progress[0] == (0, 2) and progress[-1] == (2, 2)
