@@ -38,12 +38,14 @@ Useful flags: `--interface en0`, `--kind wifi|ethernet`, `--no-resolve`
 
 | Key | Action |
 |-----|--------|
+| `Enter` | Connect to the selected device — pick an open port, it opens in the browser / Finder / a terminal |
 | `r` | Rescan now |
 | `e` | Export current list to a timestamped JSON file |
 | `o` | Toggle the per-device open-port scan |
 | `f` | Full-scan (1–65535) the selected device, gently — press again to cancel |
 | `p` | Pause / resume auto-refresh |
 | `a` | Cycle interface scope: All → Wi-Fi → Ethernet |
+| `J` / `K` | Scroll the detail pane down / up |
 | `q` | Quit |
 
 New devices since the last sweep are marked with a green `●`. Footer entries are

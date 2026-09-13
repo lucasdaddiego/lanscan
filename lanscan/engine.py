@@ -144,7 +144,10 @@ async def _ping(ip: str, timeout: float, sem: asyncio.Semaphore) -> tuple[str, b
         try:
             rc = await asyncio.wait_for(proc.wait(), timeout=timeout + 1.0)
         except TimeoutError:
-            proc.kill()
+            # Same race as the cancel path: the child may have exited (and its
+            # transport closed) between the timeout firing and the kill.
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
             await proc.wait()
             return ip, False
         except asyncio.CancelledError:

@@ -67,6 +67,24 @@ async def test_ping_timeout_kills_proc(monkeypatch):
     assert proc.killed is True
 
 
+async def test_ping_timeout_tolerates_already_exited_proc(monkeypatch):
+    class GoneProc(FakeProc):
+        def kill(self):
+            raise ProcessLookupError  # exited between the timeout and the kill
+
+    proc = GoneProc(rc=1)
+    monkeypatch.setattr(engine.asyncio, "create_subprocess_exec", _exec_returning(proc))
+
+    async def fake_wait_for(awaitable, timeout):
+        if asyncio.iscoroutine(awaitable):
+            awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr(engine.asyncio, "wait_for", fake_wait_for)
+    # A vanished child is "not alive", not a scan-killing ProcessLookupError.
+    assert await engine._ping("10.0.0.9", 0.1, asyncio.Semaphore(2)) == ("10.0.0.9", False)
+
+
 async def test_ping_cancel_kills_proc(monkeypatch):
     proc = FakeProc(hang=True)
     monkeypatch.setattr(engine.asyncio, "create_subprocess_exec", _exec_returning(proc))
