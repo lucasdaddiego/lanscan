@@ -52,6 +52,8 @@ packages = ["lanscan"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# pytest-asyncio 1.x warns while this is unset and will change its default; pin today's behaviour.
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-q"
 
