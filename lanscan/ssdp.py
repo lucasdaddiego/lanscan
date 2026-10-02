@@ -11,6 +11,7 @@ Best-effort throughout — any failure yields no UPnP data rather than breaking
 the scan. No root, no extra dependencies.
 """
 import asyncio
+import html
 import re
 import socket
 from collections.abc import Iterable
@@ -64,11 +65,13 @@ _TAGS = {t: _tag_re(t) for t in ("friendlyName", "manufacturer", "modelName")}
 
 
 def _xml_tag(xml: bytes, tag: str) -> str | None:
-    """First value of a description-XML tag, whitespace-collapsed."""
+    """First value of a description-XML tag, entity-decoded and whitespace-collapsed."""
     m = _TAGS[tag].search(xml)
     if not m:
         return None
-    text = " ".join(m.group(1).decode("utf-8", "replace").split())
+    # XML text escapes `&` and may escape `'`/`"`, so "Tom & Jerry" arrives as
+    # "Tom &amp; Jerry"; decode before display.
+    text = " ".join(html.unescape(m.group(1).decode("utf-8", "replace")).split())
     return text or None
 
 

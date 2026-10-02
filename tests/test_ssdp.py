@@ -47,6 +47,12 @@ def test_xml_tag():
     assert ssdp._xml_tag(b"<friendlyName>X</friendlyName>", "friendlyName") == "X"
 
 
+def test_xml_tag_decodes_entities():
+    # XML must escape "&", so a friendlyName "Tom & Jerry's TV" arrives escaped.
+    xml = b"<friendlyName>Tom &amp; Jerry&apos;s&#32;TV</friendlyName>"
+    assert ssdp._xml_tag(xml, "friendlyName") == "Tom & Jerry's TV"
+
+
 # ---- _enrich --------------------------------------------------------------
 async def test_enrich_no_location():
     info = {"location": None}
