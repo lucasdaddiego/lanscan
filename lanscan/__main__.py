@@ -10,6 +10,27 @@ import sys
 from . import vendors
 
 
+def _number(text: str) -> float:
+    try:
+        return float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid number: {text!r}") from None
+
+
+def _positive(text: str) -> float:
+    value = _number(text)
+    if not value > 0:  # also rejects nan
+        raise argparse.ArgumentTypeError("must be greater than 0")
+    return value
+
+
+def _non_negative(text: str) -> float:
+    value = _number(text)
+    if not value >= 0:  # also rejects nan
+        raise argparse.ArgumentTypeError("must be 0 or greater")
+    return value
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="lanscan",
@@ -32,9 +53,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="skip HTTP-banner device identification")
     p.add_argument("--no-history", action="store_true",
                    help="don't persist device history across runs")
-    p.add_argument("--timeout", type=float, default=1.0, metavar="SECS",
+    p.add_argument("--timeout", type=_non_negative, default=1.0, metavar="SECS",
                    help="per-host probe timeout (default: 1.0)")
-    p.add_argument("--interval", type=float, default=30.0, metavar="SECS",
+    p.add_argument("--interval", type=_positive, default=30.0, metavar="SECS",
                    help="auto-rescan interval (default: 30)")
     p.add_argument("--update-vendors", action="store_true",
                    help="download the Wireshark MAC vendor database, then exit")

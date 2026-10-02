@@ -511,6 +511,32 @@ async def test_toggle_pause(monkeypatch):
         assert app._scanning is False
 
 
+async def test_pause_stops_only_auto_refresh(monkeypatch):
+    # README: `p` pauses auto-refresh. A key the user presses still scans.
+    app = make_app(monkeypatch, devices=[Device(ip="192.168.0.1")])
+    monkeypatch.setattr(app, "set_timer", lambda *a, **kw: None)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_toggle_pause()
+        await run_scan(app, pilot)                 # `r` while paused
+        assert app._scanned_once is True
+        assert [d.ip for d in app._devices] == ["192.168.0.1"]
+        app.action_toggle_ports()                  # `o` (on) while paused
+        assert app._scanning is True
+        for _ in range(100):
+            await pilot.pause()
+            if not app._scanning:
+                break
+        app.action_cycle_kind()                    # `a` while paused
+        assert app._scanning is True
+        for _ in range(100):
+            await pilot.pause()
+            if not app._scanning:
+                break
+        assert app._kind == "wifi" and app._scanned_once is True
+        assert app._paused is True
+
+
 async def test_cycle_kind(monkeypatch):
     app = make_app(monkeypatch)
     async with app.run_test() as pilot:

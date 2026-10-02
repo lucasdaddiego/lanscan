@@ -297,9 +297,11 @@ class LanScanApp(App):
             self._spin_timer.resume()
 
     # ---- scanning -------------------------------------------------------
-    def _trigger_scan(self) -> None:
+    def _trigger_scan(self, manual: bool = False) -> None:
+        """Start a scan. Pause blocks only the timers (auto-refresh): a `manual`
+        trigger from a key the user pressed still scans while paused."""
         self._wake_spinner()  # also covers the pre-first-scan placeholder while paused
-        if self._scanning or self._paused:
+        if self._scanning or (self._paused and not manual):
             return
         self._scanning = True
         self._run_scan()
@@ -343,7 +345,7 @@ class LanScanApp(App):
                 # children, SSDP, port scan) racing on_unmount's mdns.stop()/history
                 # .save(). Cancellation also covers an exclusive-worker replacement,
                 # where the incoming scan already supersedes this one.
-                self._trigger_scan()
+                self._trigger_scan(manual=True)
             self._update_status()
 
     def _on_progress(self, done: int, total: int) -> None:
@@ -693,7 +695,7 @@ class LanScanApp(App):
 
     # ---- actions --------------------------------------------------------
     def action_rescan(self) -> None:
-        self._trigger_scan()
+        self._trigger_scan(manual=True)
 
     def action_scroll_detail_down(self) -> None:
         self.query_one("#detail-wrap", VerticalScroll).scroll_relative(y=5, animate=False)
@@ -718,7 +720,7 @@ class LanScanApp(App):
         self._ports = not self._ports
         if self._ports:
             self.notify("Port scan on — rescanning.")
-            self._trigger_scan()
+            self._trigger_scan(manual=True)
         else:
             # Reflect "off" instantly instead of waiting on a network sweep: drop the
             # ports we already have (keeping any on-demand full-scan results).
@@ -792,7 +794,7 @@ class LanScanApp(App):
         self._new = set()
         self._refresh_table()
         self._update_status()
-        self._trigger_scan()
+        self._trigger_scan(manual=True)
 
 
 def run_tui(args) -> int:

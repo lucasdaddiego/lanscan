@@ -1,4 +1,6 @@
 """Tests for lanscan.__main__ (CLI entry point) and the package __init__."""
+import pytest
+
 import lanscan
 from lanscan import __main__ as main_mod
 
@@ -30,6 +32,25 @@ def test_parser_all_flags():
     assert args.no_ssdp and args.no_http and args.no_history
     assert args.timeout == 2.5
     assert args.interval == 5.0
+
+
+@pytest.mark.parametrize("argv,message", [
+    (["--interval", "0"], "--interval: must be greater than 0"),
+    (["--interval", "-5"], "--interval: must be greater than 0"),
+    (["--interval", "nan"], "--interval: must be greater than 0"),
+    (["--interval", "x"], "--interval: invalid number: 'x'"),
+    (["--timeout", "-1"], "--timeout: must be 0 or greater"),
+    (["--timeout", "nan"], "--timeout: must be 0 or greater"),
+])
+def test_parser_rejects_bad_numbers(argv, message, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main_mod._build_parser().parse_args(argv)
+    assert exc.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+def test_parser_accepts_zero_timeout():
+    assert main_mod._build_parser().parse_args(["--timeout", "0"]).timeout == 0.0
 
 
 def test_main_update_vendors_success(monkeypatch, capsys):
