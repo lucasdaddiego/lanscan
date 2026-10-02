@@ -132,6 +132,7 @@ def test_split_response_skips_colonless_header_lines():
     (b"<TITLE>\n  My   Device \n</TITLE>", "My Device"),   # collapsed whitespace
     (b"<html>no title here</html>", None),
     (b"<title></title>", None),                            # empty
+    (b"<title>AT&amp;T Router &#8211; Login</title>", "AT&T Router \u2013 Login"),  # entities
 ])
 def test_title(body, expected):
     assert banners._title(body) == expected

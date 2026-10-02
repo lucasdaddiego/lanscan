@@ -8,6 +8,7 @@ No root, no extra dependencies.
 """
 import asyncio
 import contextlib
+import html
 import re
 import ssl
 
@@ -100,7 +101,8 @@ def _title(body: bytes) -> str | None:
     m = _TITLE_RE.search(body)
     if not m:
         return None
-    text = " ".join(m.group(1).decode("utf-8", "replace").split())  # collapse whitespace
+    # Decode entities ("AT&amp;T" -> "AT&T"), then collapse whitespace.
+    text = " ".join(html.unescape(m.group(1).decode("utf-8", "replace")).split())
     return text or None
 
 
