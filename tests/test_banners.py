@@ -133,6 +133,9 @@ def test_split_response_skips_colonless_header_lines():
     (b"<html>no title here</html>", None),
     (b"<title></title>", None),                            # empty
     (b"<title>AT&amp;T Router &#8211; Login</title>", "AT&T Router \u2013 Login"),  # entities
+    # Raw ESC, an entity-spelled RTL override (decoded first, then sanitized)
+    # and a raw 8-bit CSI (U+009B) all become `·`.
+    (b"<title>\x1b[2J Cam &#8238;\xc2\x9b</title>", "\u00b7[2J Cam \u00b7\u00b7"),
 ])
 def test_title(body, expected):
     assert banners._title(body) == expected
@@ -248,6 +251,14 @@ async def test_identify_fetch_fails(monkeypatch):
 
     monkeypatch.setattr(banners, "fetch", fake_fetch)
     assert await banners.identify("1.2.3.4", [8080]) == (None, None)
+
+
+async def test_identify_sanitizes_the_server_header(monkeypatch):
+    async def fake_fetch(ip, port, **kw):
+        return 200, {"server": "nginx\x1b]0;pwned\x07"}, b""
+
+    monkeypatch.setattr(banners, "fetch", fake_fetch)
+    assert await banners.identify("1.2.3.4", [80]) == ("nginx\u00b7]0;pwned\u00b7", None)
 
 
 async def test_identify_server_header_absent(monkeypatch):

@@ -13,6 +13,7 @@ import re
 import ssl
 
 from . import ports
+from .models import sanitize
 
 # Web ports we'll speak HTTP(S) to, in preference order (plain HTTP first).
 _WEB_PORTS: tuple[int, ...] = (*ports.HTTP_PORTS, *ports.HTTPS_PORTS)
@@ -101,8 +102,9 @@ def _title(body: bytes) -> str | None:
     m = _TITLE_RE.search(body)
     if not m:
         return None
-    # Decode entities ("AT&amp;T" -> "AT&T"), then collapse whitespace.
-    text = " ".join(html.unescape(m.group(1).decode("utf-8", "replace")).split())
+    # Decode entities ("AT&amp;T" -> "AT&T"), collapse whitespace, then sanitize
+    # — after decoding, since `&#27;` is a valid way to spell ESC.
+    text = sanitize(" ".join(html.unescape(m.group(1).decode("utf-8", "replace")).split()))
     return text or None
 
 
@@ -118,4 +120,4 @@ async def identify(ip: str, open_ports: list[int], *, timeout: float = 2.0):
     if res is None:
         return None, None
     _status, headers, body = res
-    return headers.get("server") or None, _title(body)
+    return sanitize(headers.get("server", "")) or None, _title(body)

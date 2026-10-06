@@ -93,6 +93,15 @@ def test_merge_returning_nameless_device_gets_its_last_known_name():
     assert records["AA:BB:CC:DD:EE:FF"]["name"] == "Kettle"  # stored name kept
 
 
+def test_merge_sanitizes_a_remembered_name_from_disk():
+    # history.json predates the sanitizer (or was edited): the stored name must
+    # not carry an escape into the detail pane via `remembered_name`.
+    records = {"AA:BB:CC:DD:EE:FF": {"first_seen": 1.0, "last_seen": 2.0, "name": "K\x1b[2J"}}
+    dev = Device(ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF")
+    history.merge(records, [dev], now=100.0)
+    assert dev.remembered_name == "K\u00b7[2J"
+
+
 def test_merge_returning_unnamed_keeps_stored_name_and_missing_first_seen():
     # Record lacks first_seen and the device has no name -> defaults + no overwrite.
     records = {"ip:10.0.0.9": {"last_seen": 10.0}}

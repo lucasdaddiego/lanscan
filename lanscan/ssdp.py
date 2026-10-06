@@ -18,6 +18,7 @@ from collections.abc import Iterable
 from urllib.parse import urlparse
 
 from . import banners
+from .models import sanitize
 
 _SSDP_ADDR = "239.255.255.250"
 _SSDP_PORT = 1900
@@ -70,8 +71,9 @@ def _xml_tag(xml: bytes, tag: str) -> str | None:
     if not m:
         return None
     # XML text escapes `&` and may escape `'`/`"`, so "Tom & Jerry" arrives as
-    # "Tom &amp; Jerry"; decode before display.
-    text = " ".join(html.unescape(m.group(1).decode("utf-8", "replace")).split())
+    # "Tom &amp; Jerry"; decode before display. Sanitize *after* decoding: an
+    # entity like `&#27;` is a perfectly valid way to spell ESC.
+    text = sanitize(" ".join(html.unescape(m.group(1).decode("utf-8", "replace")).split()))
     return text or None
 
 
@@ -164,7 +166,7 @@ async def probe(local_ips: Iterable[str] = (), *, timeout: float = 2.0,
             transport.close()
 
     result: dict[str, dict] = {
-        ip: {"server": h.get("server"), "location": h.get("location"),
+        ip: {"server": sanitize(h.get("server", "")) or None, "location": h.get("location"),
              "name": None, "model": None}
         for ip, h in collector.responses.items()
     }

@@ -261,6 +261,13 @@ async def test_reverse_dns_success(monkeypatch):
     assert await engine._reverse_dns("10.0.0.9", 1.0) == ("10.0.0.9", "host.local")
 
 
+async def test_reverse_dns_sanitizes_the_ptr_name(monkeypatch):
+    # A PTR record is set by whoever runs the resolver / the device itself.
+    monkeypatch.setattr(engine.socket, "gethostbyaddr",
+                        lambda ip: ("tv\x1b[2J\u202e.local", [], [ip]))
+    assert await engine._reverse_dns("10.0.0.9", 1.0) == ("10.0.0.9", "tv\u00b7[2J\u00b7.local")
+
+
 async def test_reverse_dns_failure(monkeypatch):
     def _boom(ip):
         raise OSError("no PTR")

@@ -1,5 +1,27 @@
 """Core data models for the LAN scanner."""
+import unicodedata
 from dataclasses import asdict, dataclass, field
+
+# Unicode general categories that must never reach a terminal: Cc (the C0 and
+# C1 controls, U+0000-U+001F and U+007F-U+009F) and Cf (format characters: the
+# bidi overrides, zero-width joiners/spaces, the BOM, ...). Replaced rather than
+# dropped, so a hostile name still shows *that* something was there.
+_UNSAFE_CATEGORIES = frozenset({"Cc", "Cf"})
+SANITIZE_MARK = "\u00b7"  # "·"
+
+
+def sanitize(text: str) -> str:
+    """Neutralise a device-supplied string before it is rendered or exported.
+
+    Every control (Cc, including the C1 range) and format (Cf) character becomes
+    ``·``. Rich/Textual strip only a handful of C0 codes, so an mDNS instance
+    name, a UPnP friendlyName, an HTTP ``<title>``/``Server`` or a PTR record
+    could otherwise carry an ESC/CSI sequence (or a right-to-left override)
+    straight into the detail pane and the JSON export. Applied once, at each
+    ingestion point, and again over every string field of ``Device.as_dict``.
+    """
+    return "".join(SANITIZE_MARK if unicodedata.category(c) in _UNSAFE_CATEGORIES else c
+                   for c in text)
 
 
 @dataclass(slots=True)
@@ -76,6 +98,10 @@ class Device:
         except ValueError:
             return (999,)
 
-    def as_dict(self) -> dict:
-        """Plain dict for JSON export: every field plus the derived name / tags."""
-        return asdict(self) | {"name": self.name, "tags": self.tags}
+    def as_dict(self) -> dict[str, object]:
+        """Plain dict for JSON export: every field plus the derived name / tags.
+
+        String fields are sanitized again here, so the export stays clean even
+        for a name that reached the record by another route (e.g. history)."""
+        data = asdict(self) | {"name": self.name, "tags": self.tags}
+        return {k: sanitize(v) if isinstance(v, str) else v for k, v in data.items()}

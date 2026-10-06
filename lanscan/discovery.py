@@ -13,6 +13,8 @@ import re
 from zeroconf import ServiceStateChange
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 
+from .models import sanitize
+
 logging.getLogger("zeroconf").setLevel(logging.ERROR)
 
 # Friendly labels for common service types (keyed without the .local. suffix).
@@ -44,7 +46,7 @@ def _friendly_from_txt(info: AsyncServiceInfo) -> str | None:
         val = props.get(key)
         if val:
             try:
-                s = val.decode("utf-8", "replace").strip()
+                s = sanitize(val.decode("utf-8", "replace").strip())
             except Exception:  # odd TXT value type — skip it
                 continue
             if s:
@@ -93,11 +95,12 @@ class MdnsDiscovery:
     async def _resolve(self, service_type: str, name: str) -> None:
         try:
             key = service_type.removesuffix(".local.").removesuffix(".")
-            label = _LABELS.get(key, key)  # we only browse labelled types
+            label = _LABELS.get(key) or sanitize(key)  # we only browse labelled types
             info = AsyncServiceInfo(service_type, name)
             if not await info.async_request(self._azc.zeroconf, 2500):
                 return
-            instance = name.removesuffix("." + service_type).removesuffix(".").strip()
+            instance = sanitize(
+                name.removesuffix("." + service_type).removesuffix(".").strip())
             friendly = _friendly_from_txt(info)
             added = friendly if friendly else (
                 instance if (instance and label != "device-info") else None)

@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import banners, net, ports, ssdp, vendors
 from ._platform import is_linux
-from .models import Device, Interface
+from .models import Device, Interface, sanitize
 
 # macOS/BSD `arp -a -n` rows: "? (ip) at mac on dev ...".
 _ARP_LINE = re.compile(
@@ -204,7 +204,7 @@ async def _reverse_dns(ip: str, timeout: float) -> tuple[str, str | None]:
     try:
         res = await asyncio.wait_for(
             loop.run_in_executor(_rdns_pool(), socket.gethostbyaddr, ip), timeout=timeout)
-        return ip, res[0]
+        return ip, sanitize(res[0])  # a PTR record is remote-controlled text
     except OSError:  # includes TimeoutError; herror/gaierror are OSErrors too
         return ip, None
 

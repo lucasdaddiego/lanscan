@@ -47,6 +47,13 @@ def test_xml_tag():
     assert ssdp._xml_tag(b"<friendlyName>X</friendlyName>", "friendlyName") == "X"
 
 
+def test_xml_tag_sanitizes_after_decoding():
+    # ESC and the 8-bit CSI U+009B become `·`; `&#8238;` (RTL override) is
+    # neutralised too because the sanitizer runs *after* entity decoding.
+    xml = "<friendlyName>\x1b[2J TV &#8238;\x9b</friendlyName>".encode()
+    assert ssdp._xml_tag(xml, "friendlyName") == "·[2J TV ··"
+
+
 def test_xml_tag_decodes_entities():
     # XML must escape "&", so a friendlyName "Tom & Jerry's TV" arrives escaped.
     xml = b"<friendlyName>Tom &amp; Jerry&apos;s&#32;TV</friendlyName>"
@@ -280,6 +287,18 @@ async def test_probe_collects_and_enriches(monkeypatch):
     assert result["192.168.1.1"]["model"] == "Acme X9"
     assert result["192.168.1.50"]["server"] == "Roku UPnP/1.0"
     assert result["192.168.1.50"]["name"] is None
+
+
+async def test_probe_sanitizes_the_server_header(monkeypatch):
+    # SERVER is shown as the model fallback; a reply without one yields None.
+    responses = {
+        "192.168.1.7": {"server": "evil\x1b[2J/1.0"},
+        "192.168.1.8": {"st": "upnp:rootdevice"},
+    }
+    _patch_endpoint(monkeypatch, responses=responses)
+    result = await ssdp.probe(timeout=0, fetch_details=False)
+    assert result["192.168.1.7"]["server"] == "evil·[2J/1.0"
+    assert result["192.168.1.8"]["server"] is None
 
 
 async def test_probe_does_not_attribute_a_foreign_location_to_the_responder(monkeypatch):

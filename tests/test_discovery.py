@@ -41,6 +41,13 @@ def test_friendly_from_txt_blank_value_ignored():
     assert discovery._friendly_from_txt(_Info(properties={b"fn": b"   "})) is None
 
 
+def test_friendly_from_txt_is_sanitized():
+    # A TXT `fn` is free-form bytes from the device: ESC and an RTL override are
+    # neutralised before the name is ever rendered or exported.
+    info = _Info(properties={b"fn": b"TV\x1b]0;x\x07\x1b[2J \xe2\x80\xae"})
+    assert discovery._friendly_from_txt(info) == "TV·]0;x··[2J ·"
+
+
 # ---- _best_name -----------------------------------------------------------
 def test_best_name_empty():
     assert discovery._best_name(set()) is None
@@ -210,6 +217,17 @@ async def test_resolve_uses_instance_when_no_txt(monkeypatch):
     md._azc = FakeAZC()
     await md._resolve("_airplay._tcp.local.", "AppleTV._airplay._tcp.local.")
     assert md.snapshot()["192.168.0.6"]["name"] == "AppleTV"
+
+
+async def test_resolve_instance_name_is_sanitized(monkeypatch):
+    # zeroconf decodes labels with "replace", so a hostile instance name can
+    # carry C0/C1 controls verbatim; they must not reach the snapshot.
+    info = _Info(properties={}, addresses=["192.168.0.6"])
+    monkeypatch.setattr(discovery, "AsyncServiceInfo", _info_factory(info))
+    md = MdnsDiscovery()
+    md._azc = FakeAZC()
+    await md._resolve("_airplay._tcp.local.", "TV\x1b[2J\x9b._airplay._tcp.local.")
+    assert md.snapshot()["192.168.0.6"]["name"] == "TV·[2J·"
 
 
 async def test_resolve_device_info_suppresses_instance(monkeypatch):

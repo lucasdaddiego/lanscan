@@ -14,7 +14,7 @@ from pathlib import Path
 
 from platformdirs import user_data_dir
 
-from .models import Device
+from .models import Device, sanitize
 
 _DATA_DIR = Path(user_data_dir("lanscan"))
 _HISTORY_PATH = _DATA_DIR / "history.json"
@@ -72,7 +72,8 @@ def merge(records: dict[str, dict], devices: list[Device],
             if d.live_name:
                 rec["name"] = d.live_name
             elif rec.get("name"):
-                d.remembered_name = rec["name"]
+                # Stored by an older run (possibly before names were sanitized).
+                d.remembered_name = sanitize(str(rec["name"]))
             d.first_seen = rec.get("first_seen", now)
             d.ever_seen = True
     return _prune(records)
