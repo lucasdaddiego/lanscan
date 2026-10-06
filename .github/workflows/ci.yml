@@ -41,11 +41,10 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Create venv (3.14)
-        run: uv venv --python 3.14
-
-      - name: Install package + test deps
-        run: uv pip install -e . --group dev
+      # --locked: fail if uv.lock is stale rather than re-resolving, so CI
+      # tests exactly the pinned dependency set a `make install` gets.
+      - name: Install package + test deps (uv.lock)
+        run: uv sync --locked --group dev --python 3.14
 
       # The 100% line+branch gate lives in pyproject ([tool.coverage.report]
       # fail_under = 100), so a coverage regression fails this step.

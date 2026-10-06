@@ -8,18 +8,19 @@ PYTHON_VERSION := 3.14
 RUFF_VERSION   := 0.16.10
 
 .DEFAULT_GOAL := help
-.PHONY: help install run vendors dev test lint clean distclean
+.PHONY: help install run vendors dev lock test lint clean distclean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-# Bootstrap: create the venv and editable-install lanscan (+ deps).
+# Bootstrap: create the venv and install lanscan (editable) plus exactly the
+# runtime deps pinned in uv.lock. --locked refuses a stale lock instead of
+# silently re-resolving, so a fresh install gets the set CI tested.
 $(PY):
-	$(UV) venv --python $(PYTHON_VERSION) $(VENV)
-	$(UV) pip install --python $(PY) -e .
+	$(UV) sync --locked --no-dev --python $(PYTHON_VERSION)
 
-install: $(PY) vendors ## Full setup: venv, deps, vendor DB, PATH symlink (~/.bin)
+install: $(PY) vendors ## Full setup: venv, locked deps, vendor DB, PATH symlink (~/.bin)
 	@mkdir -p "$(HOME)/.bin"
 	@ln -sf "$(CURDIR)/$(VENV)/bin/lanscan" "$(HOME)/.bin/lanscan"
 	@echo "done — linked $(HOME)/.bin/lanscan; run 'make run' or 'lanscan'"
@@ -30,8 +31,11 @@ run: $(PY) ## Launch the live TUI
 vendors: $(PY) ## Download the IEEE/Wireshark MAC vendor database
 	@$(PY) -m lanscan --update-vendors
 
-dev: $(PY) ## Install test/dev dependencies into the venv
-	$(UV) pip install --python $(PY) -e . --group dev
+dev: ## Install the locked test/dev dependencies into the venv
+	$(UV) sync --locked --group dev --python $(PYTHON_VERSION)
+
+lock: ## Re-resolve uv.lock after changing dependencies in pyproject.toml
+	$(UV) lock
 
 test: dev ## Run the test suite (enforces 100% coverage)
 	@$(PY) -m pytest --cov=lanscan --cov-report=term-missing
