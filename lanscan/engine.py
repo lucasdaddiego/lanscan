@@ -41,6 +41,21 @@ _ICMP_ECHO_REQUEST, _ICMP_ECHO_REPLY = 8, 0
 _ICMP_ID = os.getpid() & 0xFFFF
 _ECHO_PAYLOAD = b"lanscan!"
 _SEND_BATCH = 32  # echoes per burst before yielding, so the NIC queue isn't flooded
+_BATCH_PAUSE = 0.005  # seconds between bursts on a /24; grows with the subnet
+_PORT_CONCURRENCY = 512  # concurrent TCP connects on a /24; shrinks with the subnet
+
+
+def pacing(n_targets: int) -> tuple[float, int]:
+    """(pause between echo bursts, concurrent port probes) for `n_targets` hosts.
+
+    A /24 keeps the tuned numbers (5 ms, 512). Each doubling of the subnet
+    doubles the pause and halves the connect fan-out, so a /22 (1022 hosts)
+    trickles its echoes over ~0.6 s instead of ~0.16 s and holds 128 connects:
+    a consumer AP's flood protection keys on rate, not on the total, and the
+    per-cycle scan repeats every interval.
+    """
+    scale = max(1, -(-n_targets // 256))  # ceil(n / 256): /24 -> 1, /23 -> 2, /22 -> 4
+    return _BATCH_PAUSE * scale, max(64, _PORT_CONCURRENCY // scale)
 
 
 def _checksum(data: bytes) -> int:
@@ -87,10 +102,12 @@ def _icmp_socket() -> socket.socket | None:
 
 
 async def _icmp_sweep(targets: list[str], timeout: float,
-                      progress: ProgressCB | None) -> set[str] | None:
+                      progress: ProgressCB | None, *,
+                      pause: float = _BATCH_PAUSE) -> set[str] | None:
     """Echo every target from one socket; return who answered within `timeout`.
 
     None when the socket isn't available, so the caller can fall back to `ping`.
+    `pause` is the sleep between bursts of `_SEND_BATCH` echoes (see `pacing`).
     Progress is reported against the clock (the replies that never come are only
     known once it runs out) and the wait ends early if every target answered.
     """
@@ -108,7 +125,7 @@ async def _icmp_sweep(targets: list[str], timeout: float,
         for seq, ip in enumerate(targets):
             transport.sendto(_echo_request(seq), (ip, 0))
             if seq % _SEND_BATCH == _SEND_BATCH - 1:
-                await asyncio.sleep(0.005)
+                await asyncio.sleep(pause)
         deadline = loop.time() + timeout
         while True:
             left = deadline - loop.time()
@@ -267,9 +284,10 @@ async def scan(
     # a host that drops ICMP still answers ARP (it must, to be reachable at all),
     # so the neighbour table read right after is the authoritative device list.
     sweep = [ip for ip in targets if ip not in self_ips]
+    pause, port_concurrency = pacing(len(sweep))
     if progress:
         progress(0, len(sweep))
-    alive = await _icmp_sweep(sweep, timeout, progress)
+    alive = await _icmp_sweep(sweep, timeout, progress, pause=pause)
     if alive is None:
         alive = await _ping_sweep(sweep, timeout, concurrency, progress)
     if progress:
@@ -337,7 +355,7 @@ async def scan(
 
     async def _ports_phase() -> None:
         if scan_ports:
-            psem = asyncio.Semaphore(512)
+            psem = asyncio.Semaphore(port_concurrency)
 
             async def _fill(dev: Device) -> None:
                 dev.open_ports = await ports.open_ports(dev.ip, timeout, psem)

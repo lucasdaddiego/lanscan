@@ -4,6 +4,7 @@ The OS shell-outs (ping, arp) and all sockets are mocked, so the orchestration
 logic is exercised without touching the network.
 """
 import asyncio
+import ipaddress
 
 import pytest
 
@@ -242,6 +243,15 @@ async def test_icmp_sweep_waits_out_the_window_without_progress(monkeypatch):
     assert loop.time() - t0 >= 0.04          # several 0.1s-capped sleeps, no callback
 
 
+async def test_icmp_sweep_honours_the_batch_pause(monkeypatch):
+    targets = [f"10.0.0.{n}" for n in range(1, 70)]   # 69 echoes -> 2 batch boundaries
+    _patch_icmp_endpoint(monkeypatch, replies=set(targets))
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    assert await engine._icmp_sweep(targets, 5.0, None, pause=0.05) == set(targets)
+    assert loop.time() - t0 >= 0.09
+
+
 async def test_ping_sweep_collects_and_reports(monkeypatch):
     async def fake_ping(ip, timeout, sem):
         return ip, ip.endswith(".1")
@@ -374,6 +384,7 @@ def _install_scan_mocks(monkeypatch, *, targets, alive_icmp, arp, gateway="192.1
                         ssdp_snap=None, http_map=None, icmp_socket=False):
     """Mock every collaborator of scan(). `alive_icmp` answers via the `ping`
     fallback by default; with icmp_socket=True the socket sweep returns it."""
+    calls = {"icmp": [], "psem": []}   # (n_targets, sweep kwargs) / Semaphore sizes
     monkeypatch.setattr(engine.net, "hosts_for", lambda ifaces: dict(targets))
     monkeypatch.setattr(engine.net, "default_gateway", lambda: gateway)
 
@@ -387,7 +398,8 @@ def _install_scan_mocks(monkeypatch, *, targets, alive_icmp, arp, gateway="192.1
 
     monkeypatch.setattr(engine.banners, "identify", fake_identify)
 
-    async def fake_icmp_sweep(sweep, timeout, progress):
+    async def fake_icmp_sweep(sweep, timeout, progress, **kw):
+        calls["icmp"].append((len(sweep), kw))
         return set(alive_icmp) if icmp_socket else None
 
     monkeypatch.setattr(engine, "_icmp_sweep", fake_icmp_sweep)
@@ -404,10 +416,38 @@ def _install_scan_mocks(monkeypatch, *, targets, alive_icmp, arp, gateway="192.1
     monkeypatch.setattr(engine, "_reverse_dns", fake_rdns)
 
     async def fake_open_ports(ip, timeout, sem):
+        calls["psem"].append(sem._value)
         return [80]
 
     monkeypatch.setattr(engine.ports, "open_ports", fake_open_ports)
     monkeypatch.setattr(engine.vendors, "lookup", lambda mac: "Vend" if mac else None)
+    return calls
+
+
+@pytest.mark.parametrize("n,expected", [
+    (0, (0.005, 512)),       # nothing to sweep: the /24 defaults
+    (254, (0.005, 512)),     # /24
+    (256, (0.005, 512)),
+    (257, (0.010, 256)),     # anything past a /24 steps up
+    (510, (0.010, 256)),     # /23
+    (1022, (0.020, 128)),    # /22 (the sweep cap)
+    (4096, (0.080, 64)),     # floor on the connect fan-out
+])
+def test_pacing_scales_with_subnet_size(n, expected):
+    pause, conc = engine.pacing(n)
+    assert (round(pause, 6), conc) == expected
+
+
+async def test_scan_paces_the_sweep_and_port_scan_by_subnet_size(monkeypatch):
+    # A /22: 1022 host addresses, none of them ours -> all swept.
+    targets = {str(h): "en0" for h in ipaddress.ip_network("10.0.0.0/22").hosts()}
+    calls = _install_scan_mocks(monkeypatch, targets=targets, alive_icmp={"10.0.0.1"},
+                                arp={"10.0.0.1": ("a0:bb:cc:dd:ee:f1", "en0")},
+                                gateway=None)
+    await engine.scan([_iface()], resolve=False, mdns=None, ssdp_enabled=False,
+                      scan_ports=True, http_id=False, timeout=0.1)
+    assert calls["icmp"] == [(1022, {"pause": 0.02})]
+    assert set(calls["psem"]) == {128}        # one Semaphore(128) shared by every probe
 
 
 async def test_scan_empty_interfaces():
