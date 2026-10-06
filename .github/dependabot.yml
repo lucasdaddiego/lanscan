@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Python dependencies, via uv.lock. Grouped so a refresh is one PR, not one
+  # per package; `make lock` is what a human would run.
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      python:
+        patterns:
+          - "*"
+
+  # The workflow actions themselves (checkout, setup-uv, upload-artifact), which
+  # are pinned by commit SHA in the workflows — this is what moves the SHAs.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns:
+          - "*"

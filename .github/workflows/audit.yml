@@ -1,0 +1,38 @@
+name: audit
+
+# Known-vulnerability scan over the locked dependency set (uv audit, OSV).
+# Runs when the dependencies change, and weekly so an advisory disclosed
+# against an already-pinned package still gets caught.
+on:
+  push:
+    branches: [master]
+    paths:
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/audit.yml
+  pull_request:
+    paths:
+      - pyproject.toml
+      - uv.lock
+  schedule:
+    - cron: "41 4 * * 1" # Mondays 04:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  uv-audit:
+    name: uv audit (OSV)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      # --locked: audit exactly what uv.lock pins, and fail if it is stale.
+      - run: uv audit --locked --python-version 3.14 --preview-features audit-command
