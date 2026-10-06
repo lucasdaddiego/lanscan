@@ -467,9 +467,13 @@ async def test_export_failure(monkeypatch, tmp_path):
             raise OSError("disk full")
 
         monkeypatch.setattr(tui.Path, "write_text", boom)
+        notes = []
+        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
         app.action_export()
         await pilot.pause()
         assert list(tmp_path.glob("lanscan-*.json")) == []
+        (note,) = [(a, k) for a, k in notes if "disk full" in str(a)]
+        assert note[1]["markup"] is False       # "[Errno …]" must not parse as markup
 
 
 async def test_toggle_ports(monkeypatch):
@@ -647,7 +651,7 @@ async def test_scan_reports_failure(monkeypatch):
     app = make_app(monkeypatch)
 
     async def boom(interfaces, **kw):
-        raise RuntimeError("scan exploded")
+        raise OSError(24, "Too many open files")   # str() -> "[Errno 24] ..."
 
     monkeypatch.setattr(tui, "scan", boom)
     notes = []
@@ -655,7 +659,9 @@ async def test_scan_reports_failure(monkeypatch):
         monkeypatch.setattr(app, "notify",
                             lambda *a, **k: notes.append((a, k)))
         await run_scan(app, pilot)
-        assert any("scan exploded" in str(a) for a, k in notes)
+        # The "[Errno 24]" text must reach the toast verbatim, not as Rich markup.
+        (note,) = [(a, k) for a, k in notes if "Too many open files" in str(a)]
+        assert note[1]["markup"] is False
 
 
 async def test_scan_cancelled(monkeypatch):

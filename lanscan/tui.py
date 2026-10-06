@@ -326,7 +326,9 @@ class LanScanApp(App):
             cancelled = True
             raise
         except Exception as exc:  # a scan error must not kill the TUI
-            self.notify(f"Scan failed: {exc}", severity="error")
+            # markup=False: an OSError reads "[Errno 24] ...", which Rich would
+            # otherwise parse as a style tag inside the error path.
+            self.notify(f"Scan failed: {exc}", severity="error", markup=False)
         finally:
             self._scanning = False
             self._progress = (0, 0)
@@ -711,7 +713,8 @@ class LanScanApp(App):
         try:
             path.write_text(json.dumps([d.as_dict() for d in self._devices], indent=2))
         except OSError as exc:
-            self.notify(f"Export failed: {exc}", title="Export", severity="error")
+            self.notify(f"Export failed: {exc}", title="Export", severity="error",
+                        markup=False)
             return
         n = len(self._devices)
         self.notify(f"{n} device{'s' if n != 1 else ''} → {path}", title="Exported")
@@ -764,7 +767,7 @@ class LanScanApp(App):
             raise
         except Exception as exc:  # best-effort; never crash the TUI
             self.notify(f"Full scan of {ip} failed: {exc}", title="Full scan",
-                        severity="error")
+                        severity="error", markup=False)
             return
         finally:
             self._fullscan = None
