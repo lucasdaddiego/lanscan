@@ -1,5 +1,7 @@
 """Tests for lanscan.history — persistent device history."""
 import json
+import os
+import stat
 
 import pytest
 
@@ -53,6 +55,25 @@ def test_load_valid(hist_path):
 def test_save_round_trips(hist_path):
     history.save({"AA:BB": {"first_seen": 1.0, "last_seen": 2.0}})
     assert json.loads(hist_path.read_text()) == {"AA:BB": {"first_seen": 1.0, "last_seen": 2.0}}
+
+
+def test_save_is_private_to_the_user(hist_path):
+    old = os.umask(0o000)                            # a permissive umask must not leak
+    try:
+        history.save({"AA:BB": {}})
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(hist_path.stat().st_mode) == 0o600
+
+
+def test_save_tightens_a_leftover_tmp_file(hist_path):
+    hist_path.parent.mkdir(parents=True)
+    leftover = hist_path.with_suffix(".tmp")
+    leftover.write_text("{}")
+    leftover.chmod(0o644)                            # O_CREAT's mode won't apply here
+    history.save({"AA:BB": {}})
+    assert stat.S_IMODE(hist_path.stat().st_mode) == 0o600
+    assert not leftover.exists()
 
 
 def test_save_swallows_errors(hist_path, monkeypatch):

@@ -22,7 +22,8 @@ authorised to scan.
 ## Usage
 
 ```sh
-make install     # one-time: venv, deps, vendor DB, PATH symlink
+make install     # one-time: venv, locked deps, PATH symlink — no network download
+make vendors     # optional: fetch the full MAC vendor DB (~1–2 MB from wireshark.org)
 make run         # launch the TUI   (after `make install`: just `lanscan`)
 ```
 
@@ -109,7 +110,8 @@ clickable, so `e` doubles as an on-screen export button.
    (press `f` again). Robust hosts finish in seconds; hosts that drop closed ports
    can take minutes.
 5. **History** — every device is remembered across runs in a small JSON file
-   under your user data dir (keyed by MAC, IP as fallback), so "first seen"
+   under your user data dir (keyed by MAC, IP as fallback; written `0600`, since
+   it holds MACs and names), so "first seen"
    survives restarts, a device that's genuinely new to the network is told apart
    from one that's merely new this session, and a device that's nameless this
    run still shows its last known name (marked *last known*). `--no-history`
@@ -120,18 +122,19 @@ are labelled as such rather than guessed.
 
 ## Vendor names
 
-`make install` downloads the full IEEE/Wireshark `manuf` database (~1–2 MB,
-public data) so vendors resolve out of the box, cached offline thereafter. To
-refresh it later run `make vendors`. Without it, a small built-in map covers
-common vendors and the rest show `?`.
+Vendor lookup is offline. Out of the box a small built-in map covers common
+vendors and the rest show `?`; `make vendors` (or `lanscan --update-vendors`)
+downloads the full IEEE/Wireshark `manuf` database (~1–2 MB, public data) into
+your user cache dir, after which every known OUI resolves. It is an explicit
+step, so `make install` never touches the network. Re-run it to refresh.
 
 ## Requirements
 
 macOS or Linux, Python 3.14, and [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
 `make install` creates `.venv`, installs the deps (`textual`, `zeroconf`,
-`ifaddr`, `platformdirs`) at exactly the versions pinned in `uv.lock`, fetches
-the vendor DB, and symlinks `lanscan` into `~/.bin` — add that to your `PATH` to
-run `lanscan` from anywhere (otherwise use `make run`). Manual equivalent:
+`ifaddr`, `platformdirs`) at exactly the versions pinned in `uv.lock`, and
+symlinks `lanscan` into `~/.bin` — add that to your `PATH` to run `lanscan`
+from anywhere (otherwise use `make run`). Manual equivalent:
 
 ```sh
 uv sync --locked --no-dev --python 3.14

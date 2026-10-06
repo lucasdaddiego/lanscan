@@ -20,15 +20,16 @@ help: ## Show this help
 $(PY):
 	$(UV) sync --locked --no-dev --python $(PYTHON_VERSION)
 
-install: $(PY) vendors ## Full setup: venv, locked deps, vendor DB, PATH symlink (~/.bin)
+install: $(PY) ## Setup: venv, locked deps, PATH symlink (~/.bin); no network download
 	@mkdir -p "$(HOME)/.bin"
 	@ln -sf "$(CURDIR)/$(VENV)/bin/lanscan" "$(HOME)/.bin/lanscan"
 	@echo "done — linked $(HOME)/.bin/lanscan; run 'make run' or 'lanscan'"
+	@echo "     optional: 'make vendors' downloads the full MAC vendor DB (wireshark.org)"
 
 run: $(PY) ## Launch the live TUI
 	@$(PY) -m lanscan
 
-vendors: $(PY) ## Download the IEEE/Wireshark MAC vendor database
+vendors: $(PY) ## Download the IEEE/Wireshark MAC vendor database (opt-in, ~1–2 MB)
 	@$(PY) -m lanscan --update-vendors
 
 dev: ## Install the locked test/dev dependencies into the venv

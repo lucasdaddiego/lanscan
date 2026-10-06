@@ -40,11 +40,17 @@ def load() -> dict[str, dict]:
 
 
 def save(records: dict[str, dict]) -> None:
-    """Atomically write the history map. Best-effort — never raises."""
+    """Atomically write the history map, readable by this user only — it holds
+    MAC addresses and device names. Best-effort: never raises."""
     try:
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         tmp = _HISTORY_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(records))
+        # Create 0600 regardless of the umask; O_CREAT's mode only applies to a
+        # brand-new file, so a leftover tmp is tightened explicitly too.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(json.dumps(records))
+        os.chmod(tmp, 0o600)
         os.replace(tmp, _HISTORY_PATH)
     except OSError:
         pass
