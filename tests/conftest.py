@@ -23,6 +23,8 @@ def make_args(**over) -> argparse.Namespace:
         timeout=1.0,
         interval=30.0,
         update_vendors=False,
+        once=False,
+        json=False,
     )
     for key, value in over.items():
         setattr(ns, key, value)

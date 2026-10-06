@@ -17,19 +17,21 @@ def test_parser_defaults():
     assert args.timeout == 1.0
     assert args.interval == 30.0
     assert not any([args.no_resolve, args.no_mdns, args.no_ports, args.no_ssdp,
-                    args.no_http, args.no_history, args.update_vendors])
+                    args.no_http, args.no_history, args.update_vendors, args.once,
+                    args.json])
 
 
 def test_parser_all_flags():
     args = main_mod._build_parser().parse_args([
         "--interface", "en0", "--kind", "wifi", "--no-resolve", "--no-mdns",
         "--no-ports", "--no-ssdp", "--no-http", "--no-history", "--timeout", "2.5",
-        "--interval", "5", "--update-vendors",
+        "--interval", "5", "--update-vendors", "--once", "--json",
     ])
     assert args.interface == "en0"
     assert args.kind == "wifi"
     assert args.no_resolve and args.no_mdns and args.no_ports and args.update_vendors
     assert args.no_ssdp and args.no_http and args.no_history
+    assert args.once and args.json
     assert args.timeout == 2.5
     assert args.interval == 5.0
 
@@ -68,6 +70,32 @@ def test_main_update_vendors_failure(monkeypatch, capsys):
     assert rc == 1
     err = capsys.readouterr()
     assert "Failed: URLError: x" in err.err
+
+
+def test_version_flag(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main_mod.main(["--version"])
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.strip() == f"lanscan {lanscan.__version__}"
+
+
+def test_json_requires_once(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main_mod.main(["--json"])
+    assert exc.value.code == 2
+    assert "--json requires --once" in capsys.readouterr().err
+
+
+def test_main_once_runs_the_headless_scan(monkeypatch):
+    captured = {}
+
+    def fake_run_once(args):
+        captured["args"] = args
+        return 3
+
+    monkeypatch.setattr("lanscan.oneshot.run_once", fake_run_once)
+    assert main_mod.main(["--once", "--json", "--no-ports"]) == 3
+    assert captured["args"].json is True and captured["args"].no_ports is True
 
 
 def test_main_launches_tui(monkeypatch):

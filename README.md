@@ -26,9 +26,27 @@ make install     # one-time: venv, deps, vendor DB, PATH symlink
 make run         # launch the TUI   (after `make install`: just `lanscan`)
 ```
 
-It's a live TUI — there's no one-shot mode. To get a snapshot, press `e` inside
-the TUI to export the current device list to a timestamped `lanscan-*.json` in
-the working directory.
+For scripts and cron there is a headless mode:
+
+```sh
+lanscan --once            # scan once, print a text table, exit
+lanscan --once --json     # same scan as a JSON document (pipe into jq)
+lanscan --version
+```
+
+`--once` runs exactly one scan cycle with the same flags the TUI takes and
+exits `0` on success, `1` on a runtime error, `2` on a usage error and `3` when
+there is no active Wi-Fi/Ethernet interface to scan. The JSON document carries
+`version`, `ts` (UTC, ISO-8601), `interfaces` and `devices` — each device with
+every field of the TUI's detail pane (`name`, `mac`, `vendor`, `open_ports`,
+`services`, `tags`, `first_seen`, …), e.g. the devices with an open SSH port:
+
+```sh
+lanscan --once --json | jq -r '.devices[] | select(.open_ports | index(22)) | "\(.ip)\t\(.name)"'
+```
+
+Inside the TUI, `e` exports the current list to a timestamped `lanscan-*.json`
+(a bare device array) in the working directory.
 
 Useful flags: `--interface en0`, `--kind wifi|ethernet`, `--no-resolve`
 (skip reverse DNS), `--no-mdns`, `--no-ssdp`, `--no-ports`, `--no-http`,
@@ -134,7 +152,8 @@ The package is split so new capabilities slot in cleanly:
 - `vendors.py` — MAC → vendor
 - `launch.py` — open a port in the browser / Finder / a terminal
 - `tui.py` — the Textual app
-- `models.py` — the `Device` / `Interface` records
+- `oneshot.py` — the headless `--once` / `--json` mode
+- `models.py` — the `Device` / `Interface` records (+ `sanitize()`)
 
 Natural next steps: SSDP banner enrichment for more device types, alerts when an
 unknown device joins, or exporting history to a timeline.
