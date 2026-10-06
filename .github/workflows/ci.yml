@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   lint:
-    name: ruff
+    name: ruff + mypy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,6 +25,9 @@ jobs:
           enable-cache: true
       # Pinned so a new ruff release can't turn CI red without a deliberate bump.
       - run: uvx ruff@0.16.10 check .
+      # mypy comes from the locked dev group, so its version moves with uv.lock.
+      - run: uv sync --locked --group dev --python 3.14
+      - run: uv run mypy
 
   test:
     name: test (${{ matrix.os }})

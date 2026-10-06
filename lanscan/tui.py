@@ -10,6 +10,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rich.align import Align
 from rich.columns import Columns
@@ -22,12 +23,17 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.theme import Theme
+from textual.timer import Timer
 from textual.widgets import DataTable, Footer, Header, Label, OptionList, Static
 from textual.widgets.option_list import Option
+from textual.worker import Worker
 
 from . import history, launch, net, ports, vendors
 from .engine import scan
-from .models import Device
+from .models import Device, Interface
+
+if TYPE_CHECKING:  # imported lazily at runtime so --no-mdns never loads zeroconf
+    from .discovery import MdnsDiscovery
 
 _KIND_CYCLE = {None: "wifi", "wifi": "ethernet", "ethernet": None}
 _SCOPE_LABEL = {None: "All", "wifi": "Wi-Fi", "ethernet": "Ethernet"}
@@ -168,7 +174,7 @@ class PortPicker(ModalScreen):
         self.query_one(OptionList).focus()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        port = int(event.option.id)
+        port = int(event.option.id or 0)  # ids are always str(port)
         service = next((s for p, s in self._entries if p == port), None)
         self.dismiss((port, service))
 
@@ -218,15 +224,16 @@ class LanScanApp(App):
         self._kind = args.kind  # None | "wifi" | "ethernet"
         self._ports = not args.no_ports
         self._full_ports: dict[str, list[int]] = {}  # IP -> last full-scan result
-        self._fullscan = None          # (ip, done, total) while a full scan runs
-        self._fullscan_worker = None
+        # (ip, done, total) while a full scan runs, and the worker running it.
+        self._fullscan: tuple[str, int, int] | None = None
+        self._fullscan_worker: Worker[None] | None = None
         self._selected_ip: str | None = None
-        self._mdns = None
+        self._mdns: MdnsDiscovery | None = None
         # Device history: loaded from + saved to disk unless --no-history, in which
         # case it's session-only (first_seen still survives across refreshes).
         self._history: dict[str, dict] = {}
         self._persist = not args.no_history
-        self._ifaces: list = []
+        self._ifaces: list[Interface] = []
         self._devices: list[Device] = []
         self._known: set[str] = set()
         self._new: set[str] = set()
@@ -236,7 +243,7 @@ class LanScanApp(App):
         self._last_scan = 0.0
         self._scanned_once = False
         self._spin = 0  # braille-spinner frame, ticked while scanning
-        self._spin_timer = None  # paused while idle (no scan / full-scan running)
+        self._spin_timer: Timer | None = None  # paused while idle (nothing running)
         self._status_at = 0.0  # last status repaint driven by scan progress
         self._detail_sig: tuple | None = None  # skip redundant detail re-renders
 
@@ -585,12 +592,13 @@ class LanScanApp(App):
         # PORTS (omit unless there are any, or a full-scan of this host is running).
         # The count lives in the section header ("PORTS · 4 open"); the rows below
         # are just the ports. Enter on a port (or the row) connects to it.
-        scanning_here = bool(self._fullscan) and self._fullscan[0] == dev.ip
+        # The running full scan's (ip, done, total) when it targets this device.
+        fs = self._fullscan if (self._fullscan and self._fullscan[0] == dev.ip) else None
         full_done = dev.ip in self._full_ports
-        if dev.open_ports or scanning_here or full_done:
+        if dev.open_ports or fs or full_done:
             n = len(dev.open_ports)
-            if scanning_here:
-                _, fdone, ftotal = self._fullscan
+            if fs:
+                _, fdone, ftotal = fs
                 pct = 100 * fdone // ftotal if ftotal else 0
                 suffix = f"{n} open · scanning {pct}%" if n else f"scanning {pct}%"
             elif full_done:
@@ -600,12 +608,12 @@ class LanScanApp(App):
             pt = _kv()
             if dev.open_ports:
                 for p in dev.open_ports:
-                    name = ports.PORT_NAMES.get(p)
-                    col = _port_color(name)
+                    pname = ports.PORT_NAMES.get(p)
+                    col = _port_color(pname)
                     num = Text("▪ ", style=col)
                     num.append(f"{p:>5}", style=f"bold {col}")
-                    pt.add_row(num, Text(name or "?", style="" if name else "dim"))
-            elif scanning_here:
+                    pt.add_row(num, Text(pname or "?", style="" if pname else "dim"))
+            elif fs:
                 pt.add_row("", Text("no open ports yet", style="dim"))
             else:
                 pt.add_row("", Text("no open ports", style="dim"))

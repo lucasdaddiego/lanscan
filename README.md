@@ -168,13 +168,13 @@ The test suite is hermetic — every shell-out (`ping`/`arp`/`ifconfig`/`network
 macOS, and runs in seconds. 100% line **and** branch coverage is enforced.
 
 ```sh
-make dev      # install the locked test deps (pytest, pytest-asyncio, coverage) into .venv
+make dev      # install the locked dev deps (pytest, pytest-asyncio, coverage, mypy) into .venv
 make test     # run the suite — fails if coverage drops below 100%
-make lint     # ruff
+make lint     # ruff + mypy
 ```
 
-GitHub Actions runs the same suite plus ruff on every push and PR, on Python 3.14
-(Linux + macOS). See `.github/workflows/ci.yml`.
+GitHub Actions runs the same suite plus ruff and mypy on every push and PR, on
+Python 3.14 (Linux + macOS). See `.github/workflows/ci.yml`.
 
 ## License
 

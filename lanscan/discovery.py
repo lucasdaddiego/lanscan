@@ -93,11 +93,14 @@ class MdnsDiscovery:
             self._loop.call_soon_threadsafe(self._forget, name)
 
     async def _resolve(self, service_type: str, name: str) -> None:
+        azc = self._azc
+        if azc is None:  # stopped (or never started) while the event was queued
+            return
         try:
             key = service_type.removesuffix(".local.").removesuffix(".")
             label = _LABELS.get(key) or sanitize(key)  # we only browse labelled types
             info = AsyncServiceInfo(service_type, name)
-            if not await info.async_request(self._azc.zeroconf, 2500):
+            if not await info.async_request(azc.zeroconf, 2500):
                 return
             instance = sanitize(
                 name.removesuffix("." + service_type).removesuffix(".").strip())

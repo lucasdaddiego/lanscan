@@ -38,6 +38,7 @@ lanscan = "lanscan.__main__:main"
 # PEP 735 dependency group: `uv pip install -e . --group dev` / `uv sync --group dev`.
 [dependency-groups]
 dev = [
+    "mypy>=2.4",
     "pytest>=9.0",
     "pytest-asyncio>=1.0",
     "pytest-cov>=7.0",
@@ -71,6 +72,14 @@ exclude_lines = [
     "raise NotImplementedError",
     "@(abc\\.)?abstractmethod",
 ]
+
+[tool.mypy]
+python_version = "3.14"
+files = ["lanscan"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+# `strict = true` is the next step: it reports ~60 findings today, mostly bare
+# `dict` type arguments and the untyped argparse `args` namespace.
 
 [tool.ruff]
 line-length = 100

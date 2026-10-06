@@ -191,6 +191,17 @@ async def test_resolve_unlabelled_type_falls_back_to_its_key(monkeypatch):
     assert md.snapshot() == {"192.168.0.9": {"name": "X", "services": {"_obscure._tcp"}}}
 
 
+async def test_resolve_without_a_zeroconf_is_a_noop(monkeypatch):
+    # An event already queued when stop() ran must not touch a closed zeroconf.
+    def must_not_run(service_type, name):
+        raise AssertionError("resolved without a zeroconf")
+
+    monkeypatch.setattr(discovery, "AsyncServiceInfo", must_not_run)
+    md = MdnsDiscovery()
+    await md._resolve("_airplay._tcp.local.", "TV._airplay._tcp.local.")
+    assert md.snapshot() == {}
+
+
 async def test_resolve_request_false(monkeypatch):
     monkeypatch.setattr(discovery, "AsyncServiceInfo", _info_factory(_Info(ok=False)))
     md = MdnsDiscovery()
