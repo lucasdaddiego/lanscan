@@ -41,18 +41,15 @@ def test_parser_all_flags():
     (["--interval", "-5"], "--interval: must be greater than 0"),
     (["--interval", "nan"], "--interval: must be greater than 0"),
     (["--interval", "x"], "--interval: invalid number: 'x'"),
-    (["--timeout", "-1"], "--timeout: must be 0 or greater"),
-    (["--timeout", "nan"], "--timeout: must be 0 or greater"),
+    (["--timeout", "0"], "--timeout: must be greater than 0"),
+    (["--timeout", "-1"], "--timeout: must be greater than 0"),
+    (["--timeout", "nan"], "--timeout: must be greater than 0"),
 ])
 def test_parser_rejects_bad_numbers(argv, message, capsys):
     with pytest.raises(SystemExit) as exc:
         main_mod._build_parser().parse_args(argv)
     assert exc.value.code == 2
     assert message in capsys.readouterr().err
-
-
-def test_parser_accepts_zero_timeout():
-    assert main_mod._build_parser().parse_args(["--timeout", "0"]).timeout == 0.0
 
 
 def test_main_update_vendors_success(monkeypatch, capsys):

@@ -25,13 +25,6 @@ def _positive(text: str) -> float:
     return value
 
 
-def _non_negative(text: str) -> float:
-    value = _number(text)
-    if not value >= 0:  # also rejects nan
-        raise argparse.ArgumentTypeError("must be 0 or greater")
-    return value
-
-
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="lanscan",
@@ -54,7 +47,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="skip HTTP-banner device identification")
     p.add_argument("--no-history", action="store_true",
                    help="don't persist device history across runs")
-    p.add_argument("--timeout", type=_non_negative, default=1.0, metavar="SECS",
+    # Strictly positive: with 0 every ICMP wait and port probe times out at
+    # once, so the list silently shrinks to stale ARP entries with no open ports.
+    p.add_argument("--timeout", type=_positive, default=1.0, metavar="SECS",
                    help="per-host probe timeout (default: 1.0)")
     p.add_argument("--interval", type=_positive, default=30.0, metavar="SECS",
                    help="auto-rescan interval (default: 30)")
