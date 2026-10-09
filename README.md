@@ -85,7 +85,9 @@ clickable, so `e` doubles as an on-screen export button.
    them); where the OS refuses that socket (Linux without `ping_group_range`) it
    spawns `ping` per host instead. The sweep's real job is forcing ARP: every
    reachable host must answer it, ICMP-silent or not, so reading the neighbour
-   table afterwards yields IP↔MAC for all of them. The sweep is paced by subnet
+   table afterwards yields IP↔MAC for all of them. (macOS hides that table from
+   an ad-hoc signed process such as Homebrew's or uv's Python, and from its
+   children, so an empty read is repeated through a one-off launchd job.) The sweep is paced by subnet
    size: a /24 fires its echoes in ~40 ms and probes ports 512 at a time, a /23
    or /22 spreads the echoes out and halves the fan-out per doubling, so the
    per-cycle scan stays under a consumer AP's flood-protection threshold.

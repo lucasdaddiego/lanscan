@@ -16,6 +16,7 @@ import re
 import socket
 import struct
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -227,13 +228,59 @@ async def _reverse_dns(ip: str, timeout: float) -> tuple[str, str | None]:
 
 
 # ---- neighbour table ----------------------------------------------------------
+def _quiet_run(cmd: list[str]) -> str:
+    """stdout of cmd, or "" when it cannot run."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _launchd_run(cmd: list[str], timeout: float = 2.0) -> str:
+    """stdout of cmd, run as a one-off launchd job (`launchctl submit`), or "" on any failure.
+
+    launchd keeps a submitted job alive (it restarts it after a 10 s throttle), so the
+    job is removed as soon as it has exited once, and in every case before this returns."""
+    label = f"local.lanscan.{os.getpid()}"
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "out")
+        try:
+            if subprocess.run(["launchctl", "submit", "-l", label, "-o", out, "--", *cmd],
+                              capture_output=True, timeout=5).returncode:
+                return ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        try:
+            deadline = time.monotonic() + timeout
+            while True:
+                state = _quiet_run(["launchctl", "list", label])
+                if '"LastExitStatus"' in state and '"PID"' not in state:
+                    break
+                if time.monotonic() >= deadline:
+                    return ""
+                time.sleep(0.05)
+        finally:
+            _quiet_run(["launchctl", "remove", label])
+        try:
+            with open(out) as f:
+                return f.read()
+        except OSError:
+            return ""
+
+
 def read_arp(targets: dict[str, str]) -> dict[str, tuple[str, str]]:
     """ip -> (raw_mac, device) from the neighbour/ARP table, limited to hosts we
     actually swept (so stale / off-subnet cache entries don't surface as devices),
     and skipping incomplete rows and broadcast/multicast groups.
 
     macOS reads BSD `arp -a -n`; Linux reads `ip neigh show` (modern net-tools-free
-    equivalent). Both feed the same row filter."""
+    equivalent). Both feed the same row filter.
+
+    macOS hides every link-layer entry from an ad-hoc signed process and from all of
+    its children: `arp` prints nothing and exits 0 (seen 2026-10-09 on macOS 27).
+    Homebrew's and uv's Pythons are ad-hoc signed, so every MAC but the Mac's own went
+    missing. A job that launchd starts sits outside this process tree and sees the full
+    table, so on macOS an empty answer is read again that way."""
     if is_linux():
         cmd, pattern = ["ip", "neigh", "show"], _NEIGH_LINE
     else:
@@ -242,6 +289,8 @@ def read_arp(targets: dict[str, str]) -> dict[str, tuple[str, str]]:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         return {}
+    if not out.strip() and not is_linux():
+        out = _launchd_run(["/usr/sbin/arp", "-a", "-n"])
     table: dict[str, tuple[str, str]] = {}
     for line in out.splitlines():
         m = pattern.search(line)

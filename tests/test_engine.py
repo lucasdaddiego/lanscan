@@ -362,6 +362,106 @@ def test_read_arp_error(monkeypatch):
     assert engine.read_arp({"x": "en0"}) == {}
 
 
+# ---- read_arp through launchd: macOS hides the table from ad-hoc signed processes ----
+_ROW = "? (192.168.0.1) at a:b:c:d:e:f on en0 ifscope [ethernet]\n"
+_RUNNING = '{\n\t"PID" = 42;\n\t"LastExitStatus" = 0;\n};'
+_EXITED = '{\n\t"LastExitStatus" = 0;\n};'
+
+
+def test_read_arp_empty_on_macos_reads_through_launchd(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(engine, "is_linux", lambda: False)
+    monkeypatch.setattr(engine.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=""))
+    seen = {}
+
+    def fake_launchd(cmd, timeout=2.0):
+        seen["cmd"] = cmd
+        return _ROW
+
+    monkeypatch.setattr(engine, "_launchd_run", fake_launchd)
+    assert engine.read_arp({"192.168.0.1": "en0"}) == {"192.168.0.1": ("a:b:c:d:e:f", "en0")}
+    assert seen["cmd"] == ["/usr/sbin/arp", "-a", "-n"]
+
+
+def test_read_arp_empty_on_linux_stays_empty(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(engine, "is_linux", lambda: True)
+    monkeypatch.setattr(engine.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=""))
+    monkeypatch.setattr(engine, "_launchd_run", lambda *a, **k: pytest.fail("launchd ran"))
+    assert engine.read_arp({"192.168.0.1": "eth0"}) == {}
+
+
+def test_quiet_run(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(engine.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout="ok"))
+    assert engine._quiet_run(["x"]) == "ok"
+
+    def _boom(*a, **k):
+        raise engine.subprocess.TimeoutExpired("x", 5)
+
+    monkeypatch.setattr(engine.subprocess, "run", _boom)
+    assert engine._quiet_run(["x"]) == ""
+
+
+def _fake_submit(write=True, returncode=0):
+    """`launchctl submit` stand-in: writes the job's output to its -o path."""
+    from types import SimpleNamespace
+
+    def run(cmd, **k):
+        if write:
+            with open(cmd[cmd.index("-o") + 1], "w") as f:
+                f.write(_ROW)
+        return SimpleNamespace(returncode=returncode)
+
+    return run
+
+
+def _launchctl(calls, states):
+    """`_quiet_run` stand-in for `launchctl list|remove`: records the verb, replays states."""
+    def quiet(cmd):
+        calls.append(cmd[1])
+        return next(states) if cmd[1] == "list" else ""
+
+    return quiet
+
+
+def test_launchd_run_reads_the_output_once_the_job_has_exited(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(engine.subprocess, "run", _fake_submit())
+    monkeypatch.setattr(engine, "_quiet_run", _launchctl(calls, iter([_RUNNING, _EXITED])))
+    monkeypatch.setattr(engine.time, "sleep", lambda s: None)
+    assert engine._launchd_run(["/usr/sbin/arp", "-a", "-n"]) == _ROW
+    assert calls == ["list", "list", "remove"]
+
+
+def test_launchd_run_removes_a_job_that_never_exits(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(engine.subprocess, "run", _fake_submit())
+    monkeypatch.setattr(engine, "_quiet_run", _launchctl(calls, iter([_RUNNING])))
+    assert engine._launchd_run(["/usr/sbin/arp", "-a", "-n"], timeout=0) == ""
+    assert calls == ["list", "remove"]
+
+
+def test_launchd_run_without_output_gives_nothing(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(engine.subprocess, "run", _fake_submit(write=False))
+    monkeypatch.setattr(engine, "_quiet_run", _launchctl(calls, iter([_EXITED])))
+    assert engine._launchd_run(["/usr/sbin/arp", "-a", "-n"]) == ""
+    assert calls == ["list", "remove"]
+
+
+def test_launchd_run_failed_submit_gives_nothing(monkeypatch):
+    monkeypatch.setattr(engine, "_quiet_run", lambda cmd: pytest.fail("nothing to remove"))
+    monkeypatch.setattr(engine.subprocess, "run", _fake_submit(write=False, returncode=1))
+    assert engine._launchd_run(["/usr/sbin/arp", "-a", "-n"]) == ""
+
+    def _boom(*a, **k):
+        raise OSError("no launchctl")
+
+    monkeypatch.setattr(engine.subprocess, "run", _boom)
+    assert engine._launchd_run(["/usr/sbin/arp", "-a", "-n"]) == ""
+
+
 @pytest.mark.parametrize("linux,flag", [(True, "-W"), (False, "-t")])
 def test_ping_argv(monkeypatch, linux, flag):
     monkeypatch.setattr(engine, "is_linux", lambda: linux)
