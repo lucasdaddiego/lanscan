@@ -463,8 +463,10 @@ class LanScanApp(App[None]):
             return
         port, service = result
         ok, msg = launch.launch(ip, port, service)
+        # markup=False: a failure carries the OSError text ("[Errno 2] ..."), and
+        # Rich markup would eat any "[word]" in it.
         self.notify(msg, title=f"Connect {ip}:{port}",
-                    severity="information" if ok else "error")
+                    severity="information" if ok else "error", markup=False)
 
     # ---- detail pane ----------------------------------------------------
     def _device_by_ip(self, ip: str | None) -> Device | None:
@@ -734,7 +736,9 @@ class LanScanApp(App[None]):
                         markup=False)
             return
         n = len(self._devices)
-        self.notify(f"{n} device{'s' if n != 1 else ''} → {path}", title="Exported")
+        # markup=False: a working directory like ~/scans/[old] would lose "[old]".
+        self.notify(f"{n} device{'s' if n != 1 else ''} → {path}", title="Exported",
+                    markup=False)
 
     def action_toggle_ports(self) -> None:
         self._ports = not self._ports

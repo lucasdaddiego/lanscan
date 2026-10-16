@@ -453,6 +453,22 @@ async def test_actions_export(monkeypatch, tmp_path):
         assert [i["device"] for i in doc["interfaces"]] == ["en0"]
 
 
+async def test_export_toast_shows_a_bracketed_path_verbatim(monkeypatch, tmp_path):
+    # Rich markup read "[old]" in ~/scans/[old] as a tag and dropped it.
+    where = tmp_path / "[old]"
+    where.mkdir()
+    monkeypatch.chdir(where)
+    app = make_app(monkeypatch, devices=[Device(ip="192.168.0.1")])
+    async with app.run_test() as pilot:
+        await run_scan(app, pilot)
+        notes = []
+        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
+        app.action_export()
+        await pilot.pause()
+        (note,) = [(a, k) for a, k in notes if k.get("title") == "Exported"]
+        assert "[old]" in note[0][0] and note[1]["markup"] is False
+
+
 async def test_export_nothing(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     app = make_app(monkeypatch)
@@ -782,14 +798,20 @@ async def test_connect_picks_port_and_launches(monkeypatch):
 async def test_connect_launch_failure_notifies(monkeypatch):
     dev = Device(ip="192.168.0.1", open_ports=[80])
     app = make_app(monkeypatch, devices=[dev])
-    monkeypatch.setattr(tui.launch, "launch", lambda ip, port, svc: (False, "nope"))
+    err = "couldn't launch: [Errno 2] No such file or directory: '[x]'"
+    monkeypatch.setattr(tui.launch, "launch", lambda ip, port, svc: (False, err))
     async with app.run_test() as pilot:
         await run_scan(app, pilot)
+        notes = []
+        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
         app.action_connect()
         await pilot.pause()
         app.screen.on_option_list_option_selected(
             type("S", (), {"option": type("O", (), {"id": "80"})()})())
         await pilot.pause()
+        (note,) = [(a, k) for a, k in notes if a and a[0] == err]
+        assert note[1] == {"title": "Connect 192.168.0.1:80", "severity": "error",
+                           "markup": False}     # the OSError text is not markup
 
 
 async def test_port_picker_cancel(monkeypatch):
