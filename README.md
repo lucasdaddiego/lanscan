@@ -3,7 +3,7 @@
 [![CI](https://github.com/lucasdaddiego/lanscan/actions/workflows/ci.yml/badge.svg)](https://github.com/lucasdaddiego/lanscan/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](https://github.com/lucasdaddiego/lanscan/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.14-blue.svg)
+![Python](https://img.shields.io/badge/python-3.15-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
 
 Discover the devices connected to your local network — a live terminal UI with a
@@ -132,14 +132,14 @@ step, so `make install` never touches the network. Re-run it to refresh.
 
 ## Requirements
 
-macOS or Linux, Python 3.14, and [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
+macOS or Linux, Python 3.15, and [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
 `make install` creates `.venv`, installs the deps (`textual`, `zeroconf`,
 `ifaddr`, `platformdirs`) at exactly the versions pinned in `uv.lock`, and
 symlinks `lanscan` into `~/.bin` — add that to your `PATH` to run `lanscan`
 from anywhere (otherwise use `make run`). Manual equivalent:
 
 ```sh
-uv sync --locked --no-dev --python 3.14
+uv sync --locked --no-dev --python 3.15
 ```
 
 To move to newer dependency versions, edit `pyproject.toml` if a floor changes,
@@ -179,7 +179,7 @@ make lint     # ruff + mypy
 ```
 
 GitHub Actions runs the same suite plus ruff and mypy on every push and PR, on
-Python 3.14 (Linux + macOS). See `.github/workflows/ci.yml`.
+Python 3.15 (Linux + macOS). See `.github/workflows/ci.yml`.
 
 ## License
 

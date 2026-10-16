@@ -3,9 +3,9 @@
 VENV           := .venv
 PY             := $(VENV)/bin/python
 UV             := uv
-PYTHON_VERSION := 3.14
+PYTHON_VERSION := 3.15
 
-RUFF_VERSION   := 0.16.10
+RUFF_VERSION   := 0.17.1
 
 .DEFAULT_GOAL := help
 .PHONY: help install run vendors dev lock test lint clean distclean
