@@ -20,10 +20,14 @@ import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING, Any
 
 from . import banners, net, ports, ssdp, vendors
 from ._platform import is_linux
 from .models import Device, Interface, sanitize
+
+if TYPE_CHECKING:  # imported lazily at runtime so --no-mdns never loads zeroconf
+    from .discovery import MdnsDiscovery
 
 # macOS/BSD `arp -a -n` rows: "? (ip) at mac on dev ...".
 _ARP_LINE = re.compile(
@@ -83,7 +87,7 @@ class _EchoCollector(asyncio.DatagramProtocol):
     def __init__(self) -> None:
         self.alive: set[str] = set()
 
-    def datagram_received(self, data: bytes, addr) -> None:
+    def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
         # macOS/BSD hands us the IP header too (first nibble = version 4); Linux
         # ping sockets strip it. Either way the ICMP type byte follows.
         if data and data[0] >> 4 == 4:
@@ -312,7 +316,7 @@ async def scan(
     interfaces: list[Interface],
     *,
     resolve: bool = True,
-    mdns=None,
+    mdns: MdnsDiscovery | None = None,
     ssdp_enabled: bool = True,
     scan_ports: bool = True,
     http_id: bool = True,
@@ -385,8 +389,8 @@ async def scan(
         for d in devices:
             hit = snap.get(d.ip)
             if hit:
-                d.mdns_name = hit.get("name") or d.mdns_name
-                d.services = sorted(hit.get("services", set()))
+                d.mdns_name = hit["name"] or d.mdns_name
+                d.services = sorted(hit["services"])
 
     # 5 + 6. SSDP/UPnP identity and the port + HTTP-banner phase are independent
     # (they touch disjoint Device fields), so run them concurrently: the SSDP

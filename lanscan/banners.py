@@ -22,6 +22,9 @@ _TITLE_RE = re.compile(rb"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 _TLS_CTX: ssl.SSLContext | None = None
 
+# (status, lower-cased headers, body) of one HTTP response.
+Response = tuple[int, dict[str, str], bytes]
+
 
 def _tls_context() -> ssl.SSLContext:
     """A permissive TLS context — LAN devices almost always present self-signed
@@ -36,7 +39,7 @@ def _tls_context() -> ssl.SSLContext:
 
 
 async def fetch(host: str, port: int, path: str = "/", *, tls: bool = False,
-                timeout: float = 2.0, max_bytes: int = 65536):
+                timeout: float = 2.0, max_bytes: int = 65536) -> Response | None:
     """One HTTP/1.0 GET. Returns (status, headers, body) or None on any failure."""
     ctx = _tls_context() if tls else None
     loop = asyncio.get_running_loop()
@@ -79,7 +82,7 @@ async def fetch(host: str, port: int, path: str = "/", *, tls: bool = False,
     return _split_response(raw)
 
 
-def _split_response(raw: bytes):
+def _split_response(raw: bytes) -> Response | None:
     """(status, headers, body) from a raw HTTP response, or None if unparseable."""
     head, _, body = raw.partition(b"\r\n\r\n")
     lines = head.split(b"\r\n")
@@ -108,7 +111,8 @@ def _title(body: bytes) -> str | None:
     return text or None
 
 
-async def identify(ip: str, open_ports: list[int], *, timeout: float = 2.0):
+async def identify(ip: str, open_ports: list[int], *,
+                   timeout: float = 2.0) -> tuple[str | None, str | None]:
     """Best HTTP banner for a device as ``(server, title)`` (each str | None).
 
     Probes the single most-preferred open web port; no web port -> (None, None).

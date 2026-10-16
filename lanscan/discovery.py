@@ -9,8 +9,9 @@ import asyncio
 import contextlib
 import logging
 import re
+from typing import Any, TypedDict
 
-from zeroconf import ServiceStateChange
+from zeroconf import ServiceStateChange, Zeroconf
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 
 from .models import sanitize
@@ -38,6 +39,25 @@ _LABELS: dict[str, str] = {
 _TYPES = [f"{t}.local." for t in _LABELS]
 
 
+class MdnsHit(TypedDict):
+    """What `snapshot()` reports per IP: the best instance name and the labels."""
+
+    name: str | None
+    services: set[str]
+
+
+class _IpEntry(MdnsHit):
+    instances: set[str]  # every name any instance on this IP advertises
+
+
+class _InstanceRecord(TypedDict):
+    """One resolved instance's contribution, kept so a Removed event can undo it."""
+
+    ips: set[str]
+    label: str
+    instance: str | None
+
+
 def _friendly_from_txt(info: AsyncServiceInfo) -> str | None:
     """A human-set device name from the service's TXT record, if present
     (e.g. Chromecast advertises its room name under `fn`)."""
@@ -62,7 +82,7 @@ def _best_name(instances: set[str]) -> str | None:
     if not instances:
         return None
 
-    def rank(s: str) -> tuple:
+    def rank(s: str) -> tuple[bool, int, int]:
         human = " " in s or "'" in s or "’" in s
         return (bool(_UUIDISH.match(s)), 0 if human else 1, len(s))
 
@@ -75,8 +95,8 @@ class MdnsDiscovery:
         self._azc: AsyncZeroconf | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._browser: AsyncServiceBrowser | None = None
-        self._by_ip: dict[str, dict] = {}
-        self._by_name: dict[str, dict] = {}  # instance -> {ips, label, instance}
+        self._by_ip: dict[str, _IpEntry] = {}
+        self._by_name: dict[str, _InstanceRecord] = {}  # instance -> {ips, label, instance}
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -84,7 +104,8 @@ class MdnsDiscovery:
         self._browser = AsyncServiceBrowser(self._azc.zeroconf, _TYPES,
                                             handlers=[self._on_service])
 
-    def _on_service(self, zeroconf, service_type, name, state_change, **_) -> None:
+    def _on_service(self, zeroconf: Zeroconf, service_type: str, name: str,
+                    state_change: ServiceStateChange, **_: Any) -> None:
         if not self._loop:
             return
         if state_change in (ServiceStateChange.Added, ServiceStateChange.Updated):
@@ -146,7 +167,7 @@ class MdnsDiscovery:
             else:
                 self._by_ip.pop(ip, None)
 
-    def snapshot(self) -> dict[str, dict]:
+    def snapshot(self) -> dict[str, MdnsHit]:
         return {ip: {"name": v["name"], "services": set(v["services"])}
                 for ip, v in self._by_ip.items()}
 

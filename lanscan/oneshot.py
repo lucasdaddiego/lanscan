@@ -5,27 +5,31 @@ optional mDNS warm-up, `engine.scan`, the history merge) exactly once, prints
 the device list and exits. Exit codes follow the sibling scanners: 0 ok,
 1 runtime error, 3 no interface to scan (a usage error is argparse's 2).
 """
+import argparse
 import asyncio
 import json
 import sys
 import time
 from dataclasses import asdict
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
 from . import __version__, history, net, vendors
 from .engine import scan
 from .models import Device, Interface
+
+if TYPE_CHECKING:  # imported lazily at runtime so --no-mdns never loads zeroconf
+    from .discovery import MdnsDiscovery
 
 EXIT_OK, EXIT_ERROR, EXIT_NO_SOURCE = 0, 1, 3
 # Seconds the mDNS browser runs before the sweep, as before the TUI's first scan.
 MDNS_WARMUP = 1.2
 
 
-async def _gather(args) -> tuple[list[Interface], list[Device]]:
+async def _gather(args: argparse.Namespace) -> tuple[list[Interface], list[Device]]:
     ifaces = net.discover_interfaces(only_device=args.interface, only_kind=args.kind)
     if not ifaces:
         return [], []
-    mdns = None
+    mdns: MdnsDiscovery | None = None
     if not args.no_mdns:
         from .discovery import MdnsDiscovery
         try:
@@ -84,7 +88,8 @@ def _print_json(ifaces: list[Interface], devices: list[Device], out: TextIO) -> 
     out.write("\n")
 
 
-def run_once(args, out: TextIO = sys.stdout, err: TextIO = sys.stderr) -> int:
+def run_once(args: argparse.Namespace, out: TextIO = sys.stdout,
+             err: TextIO = sys.stderr) -> int:
     """Scan once and print the devices; returns the process exit code."""
     try:
         ifaces, devices = asyncio.run(_gather(args))

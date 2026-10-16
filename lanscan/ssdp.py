@@ -15,6 +15,7 @@ import html
 import re
 import socket
 from collections.abc import Iterable
+from typing import Any, TypedDict
 from urllib.parse import urlparse
 
 from . import banners
@@ -30,6 +31,15 @@ _MSEARCH = (
     "ST: ssdp:all\r\n"
     "\r\n"
 ).encode()
+
+
+class UpnpInfo(TypedDict):
+    """What `probe()` reports per responding IP."""
+
+    server: str | None
+    location: str | None
+    name: str | None
+    model: str | None
 
 
 def _parse_headers(data: bytes) -> dict[str, str]:
@@ -49,7 +59,7 @@ class _Collector(asyncio.DatagramProtocol):
     def __init__(self) -> None:
         self.responses: dict[str, dict[str, str]] = {}
 
-    def datagram_received(self, data: bytes, addr) -> None:
+    def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
         ip = addr[0]
         headers = _parse_headers(data)
         prev = self.responses.get(ip)
@@ -77,7 +87,7 @@ def _xml_tag(xml: bytes, tag: str) -> str | None:
     return text or None
 
 
-async def _enrich(ip: str, info: dict, *, timeout: float) -> None:
+async def _enrich(ip: str, info: UpnpInfo, *, timeout: float) -> None:
     """Fetch the device description at LOCATION and fill in name / model.
 
     ``ip`` is the host that actually sent the reply, and we only follow a
@@ -143,7 +153,7 @@ async def _open_transports(loop: asyncio.AbstractEventLoop, collector: _Collecto
 
 
 async def probe(local_ips: Iterable[str] = (), *, timeout: float = 2.0,
-                fetch_details: bool = True) -> dict[str, dict]:
+                fetch_details: bool = True) -> dict[str, UpnpInfo]:
     """M-SEARCH out of each `local_ips` interface (or the default route when none
     are given) and return ``{ip: {server, location, name, model}}``.
 
@@ -165,7 +175,7 @@ async def probe(local_ips: Iterable[str] = (), *, timeout: float = 2.0,
         for transport in transports:
             transport.close()
 
-    result: dict[str, dict] = {
+    result: dict[str, UpnpInfo] = {
         ip: {"server": sanitize(h.get("server", "")) or None, "location": h.get("location"),
              "name": None, "model": None}
         for ip, h in collector.responses.items()

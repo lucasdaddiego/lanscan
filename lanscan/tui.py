@@ -6,6 +6,7 @@ The list refreshes on an interval, runs mDNS in the background, re-discovers
 interfaces each cycle, and keeps the selection pinned to the same device (by IP)
 across refreshes.
 """
+import argparse
 import asyncio
 import json
 import time
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from rich.align import Align
 from rich.columns import Columns
-from rich.console import Group
+from rich.console import Group, RenderableType
 from rich.table import Table as RTable
 from rich.text import Text
 from textual import work
@@ -125,14 +126,18 @@ def _val(s: str | None) -> Text:
     return Text(s) if s else Text(DASH, style="dim")
 
 
-class DeviceTable(DataTable):
+class DeviceTable(DataTable[Text]):
     """The master list. Re-points Enter at the app's connect action (instead of
     DataTable's hidden `select_cursor`) so the Footer advertises "Connect ▸"."""
 
     BINDINGS = [Binding("enter", "app.connect", "Connect", show=True)]
 
 
-class PortPicker(ModalScreen):
+# What the port picker dismisses with: (port, service), or None on cancel.
+PortChoice = tuple[int, str | None] | None
+
+
+class PortPicker(ModalScreen[PortChoice]):
     """Pick one of a device's open ports → connect to it (browser / terminal).
 
     Dismisses with (port, service) on selection, or None on cancel.
@@ -182,7 +187,7 @@ class PortPicker(ModalScreen):
         self.dismiss(None)
 
 
-class LanScanApp(App):
+class LanScanApp(App[None]):
     ENABLE_COMMAND_PALETTE = False
 
     CSS = """
@@ -218,7 +223,7 @@ class LanScanApp(App):
         ("q", "quit", "Quit"),
     ]
 
-    def __init__(self, args) -> None:
+    def __init__(self, args: argparse.Namespace) -> None:
         super().__init__()
         self.args = args
         self._kind = args.kind  # None | "wifi" | "ethernet"
@@ -231,7 +236,7 @@ class LanScanApp(App):
         self._mdns: MdnsDiscovery | None = None
         # Device history: loaded from + saved to disk unless --no-history, in which
         # case it's session-only (first_seen still survives across refreshes).
-        self._history: dict[str, dict] = {}
+        self._history: dict[str, history.Record] = {}
         self._persist = not args.no_history
         self._ifaces: list[Interface] = []
         self._devices: list[Device] = []
@@ -245,7 +250,7 @@ class LanScanApp(App):
         self._spin = 0  # braille-spinner frame, ticked while scanning
         self._spin_timer: Timer | None = None  # paused while idle (nothing running)
         self._status_at = 0.0  # last status repaint driven by scan progress
-        self._detail_sig: tuple | None = None  # skip redundant detail re-renders
+        self._detail_sig: tuple[object, ...] | None = None  # skip redundant re-renders
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True, icon=" ")  # drop Textual's default ⭘ (spotty font coverage)
@@ -450,7 +455,7 @@ class LanScanApp(App):
         self.push_screen(PortPicker(dev.ip, entries),
                          lambda res, ip=dev.ip: self._launch_port(ip, res))
 
-    def _launch_port(self, ip: str, result) -> None:
+    def _launch_port(self, ip: str, result: PortChoice) -> None:
         if not result:
             return
         port, service = result
@@ -467,7 +472,7 @@ class LanScanApp(App):
     def _selected_device(self) -> Device | None:
         return self._device_by_ip(self._selected_ip)
 
-    def _detail_signature(self, dev: Device | None) -> tuple:
+    def _detail_signature(self, dev: Device | None) -> tuple[object, ...]:
         """Everything the detail pane actually displays, so we can skip a redundant
         re-render (which would otherwise wipe an in-progress mouse text selection)."""
         if dev is None:
@@ -494,7 +499,7 @@ class LanScanApp(App):
         self._detail_sig = sig
         pane.update(self._detail_renderable(dev))
 
-    def _placeholder(self):
+    def _placeholder(self) -> RenderableType:
         scope = _SCOPE_LABEL[self._kind]
         if not self._scanned_once:
             glyph, gcol = _SPINNER[self._spin], C["cyan"]
@@ -514,12 +519,12 @@ class LanScanApp(App):
         )
         return Align.center(body, vertical="middle")
 
-    def _detail_renderable(self, dev: Device | None):
+    def _detail_renderable(self, dev: Device | None) -> RenderableType:
         if dev is None:
             return self._placeholder()
 
         is_new = dev.ip in self._new
-        blocks = []
+        blocks: list[RenderableType] = []
 
         title = Text()
         title.append("● " if is_new else "· ", style=PAL["new"] if is_new else "dim")
@@ -532,7 +537,7 @@ class LanScanApp(App):
                 title.append_text(_badge("THIS MAC", C["cyan"]))
         blocks.append(title)
 
-        def section(name, body, *, suffix=""):
+        def section(name: str, body: RenderableType, *, suffix: str = "") -> Group:
             head = Text()
             head.append("▌ ", style=PAL["accent"])
             head.append(name, style=PAL["head"])
@@ -628,7 +633,7 @@ class LanScanApp(App):
         # ACTIVITY
         act = _kv()
 
-        def ts(v):
+        def ts(v: float) -> str:
             return time.strftime("%H:%M:%S", time.localtime(v)) if v else DASH
         # Persisted history can put first-seen days ago, so show the date when it's old.
         if dev.first_seen and time.time() - dev.first_seen >= 86400:
@@ -647,7 +652,7 @@ class LanScanApp(App):
             act.add_row("New", Text("yes", style=PAL["ok"]))
         blocks.append(section("ACTIVITY", act))
 
-        spaced = []
+        spaced: list[RenderableType] = []
         for i, b in enumerate(blocks):
             if i:
                 spaced.append(Text(""))
@@ -808,6 +813,6 @@ class LanScanApp(App):
         self._trigger_scan(manual=True)
 
 
-def run_tui(args) -> int:
+def run_tui(args: argparse.Namespace) -> int:
     LanScanApp(args).run()
     return 0

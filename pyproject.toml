@@ -76,10 +76,9 @@ exclude_lines = [
 [tool.mypy]
 python_version = "3.15"
 files = ["lanscan"]
-warn_unused_ignores = true
-warn_redundant_casts = true
-# `strict = true` is the next step: it reports ~60 findings today, mostly bare
-# `dict` type arguments and the untyped argparse `args` namespace.
+# The CI gate (`make lint`, the lint job). strict also turns on
+# warn_unused_ignores and warn_redundant_casts.
+strict = true
 
 [tool.ruff]
 line-length = 100

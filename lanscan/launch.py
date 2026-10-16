@@ -12,6 +12,7 @@ import os
 import shlex
 import shutil
 import subprocess
+from collections.abc import Callable
 
 from . import ports
 from ._platform import is_linux
@@ -115,10 +116,13 @@ def _pick_terminal() -> str:
     return "terminal"
 
 
+# Builds the argv that runs a shell command in a new terminal window.
+ArgvBuilder = Callable[[str], list[str]]
+
 # Linux GUI terminals, best-first, with the argv form that runs a shell command
 # in a fresh window. `-e`/`--`/bare-argv conventions differ per emulator, so each
 # carries its own builder. `$TERMINAL` (if set + installed) wins over this order.
-_LINUX_TERMINALS = [
+_LINUX_TERMINALS: list[tuple[str, ArgvBuilder]] = [
     ("ghostty", lambda c: ["ghostty", "-e", "sh", "-c", c]),
     ("gnome-terminal", lambda c: ["gnome-terminal", "--", "sh", "-c", c]),
     ("konsole", lambda c: ["konsole", "-e", "sh", "-c", c]),
@@ -130,7 +134,7 @@ _LINUX_TERMINALS = [
 ]
 
 
-def _pick_terminal_linux():
+def _pick_terminal_linux() -> tuple[str, ArgvBuilder | None]:
     """(name, argv-builder) for the terminal to use, or ("sh", None) if no GUI
     terminal is installed. `$TERMINAL` takes priority when it's a known emulator."""
     table = dict(_LINUX_TERMINALS)
