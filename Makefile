@@ -20,7 +20,10 @@ help: ## Show this help
 $(PY):
 	$(UV) sync --locked --no-dev --python $(PYTHON_VERSION)
 
-install: $(PY) ## Setup: venv, locked deps, PATH symlink (~/.bin); no network download
+# Always re-syncs (unlike the $(PY) bootstrap, which only runs once): after a
+# pull that moves uv.lock or PYTHON_VERSION, `make install` must apply it.
+install: ## Setup: venv, locked deps, PATH symlink (~/.bin); no network download
+	$(UV) sync --locked --no-dev --python $(PYTHON_VERSION)
 	@mkdir -p "$(HOME)/.bin"
 	@ln -sf "$(CURDIR)/$(VENV)/bin/lanscan" "$(HOME)/.bin/lanscan"
 	@echo "done — linked $(HOME)/.bin/lanscan; run 'make run' or 'lanscan'"
