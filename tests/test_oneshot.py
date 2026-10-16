@@ -150,3 +150,13 @@ def test_no_interface_exits_3(mocks, monkeypatch):
 def test_cell_pads_and_truncates():
     assert oneshot._cell("ab", 4) == "ab  "
     assert oneshot._cell("abcdef", 4) == "abc…"
+
+
+def test_cell_counts_terminal_columns_not_characters():
+    # A Chinese TV's mDNS name: 4 characters, 8 columns. Padded by len() it
+    # pushed the PORTS column 4 places right on that row.
+    assert oneshot._cell("客厅电视", 10) == "客厅电视  "
+    assert oneshot._cell("客厅电视机顶盒", 9) == "客厅电视…"     # 8 + 1 columns
+    assert oneshot._cell("客厅电视机顶盒", 8) == "客厅电… "      # 视 would straddle: 6 + 1 + pad
+    for text in ("客厅电视机顶盒", "abcdef", "ab"):
+        assert oneshot.cell_len(oneshot._cell(text, 8)) <= 8

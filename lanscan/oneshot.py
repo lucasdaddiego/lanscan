@@ -13,6 +13,8 @@ import time
 from dataclasses import asdict
 from typing import TYPE_CHECKING, TextIO
 
+from rich.cells import cell_len
+
 from . import __version__, history, net, vendors
 from .engine import scan
 from .models import Device, Interface
@@ -58,10 +60,17 @@ async def _gather(args: argparse.Namespace) -> tuple[list[Interface], list[Devic
 
 
 def _cell(text: str, width: int) -> str:
-    """Pad / truncate to a fixed column width (ellipsis when cut)."""
-    if len(text) > width:
-        text = text[:width - 1] + "…"
-    return text.ljust(width)
+    """Pad / truncate to `width` terminal columns (ellipsis when cut). Counts
+    cells, not characters: a CJK name is two columns per character, and a wide
+    character that would straddle the cut is dropped."""
+    if cell_len(text) > width:
+        # The text is wider than `width`, so this stops before running off its end.
+        cut = used = 0
+        while used + cell_len(text[cut]) <= width - 1:
+            used += cell_len(text[cut])
+            cut += 1
+        text = text[:cut] + "…"
+    return text + " " * (width - cell_len(text))
 
 
 def _print_table(devices: list[Device], out: TextIO) -> None:
