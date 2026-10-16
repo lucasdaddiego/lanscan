@@ -550,6 +550,25 @@ async def test_scan_paces_the_sweep_and_port_scan_by_subnet_size(monkeypatch):
     assert set(calls["psem"]) == {128}        # one Semaphore(128) shared by every probe
 
 
+async def test_scan_reads_the_neighbour_table_off_the_event_loop(monkeypatch):
+    # On macOS an empty `arp` is re-read through a launchd job (~0.5 s of
+    # subprocess + polling). Run on the loop, that froze the TUI's keys and
+    # spinner once per cycle; it must run in a worker thread.
+    import threading
+    _install_scan_mocks(monkeypatch, targets={"192.168.0.1": "en0"},
+                        alive_icmp={"192.168.0.1"}, arp={}, gateway=None)
+    seen = []
+
+    def fake_read_arp(targets):
+        seen.append(threading.current_thread() is threading.main_thread())
+        return {}
+
+    monkeypatch.setattr(engine, "read_arp", fake_read_arp)
+    await engine.scan([_iface()], resolve=False, mdns=None, ssdp_enabled=False,
+                      scan_ports=False, http_id=False, timeout=0.1)
+    assert seen == [False]
+
+
 async def test_scan_empty_interfaces():
     assert await engine.scan([]) == []
 

@@ -345,7 +345,9 @@ async def scan(
         alive = await _ping_sweep(sweep, timeout, concurrency, progress)
     if progress:
         progress(len(sweep), len(sweep))
-    arp = read_arp(targets)
+    # In a worker thread: on macOS the launchd fallback (see read_arp) holds the
+    # caller for ~0.5 s, which on the loop froze the TUI's keys and spinner.
+    arp = await asyncio.to_thread(read_arp, targets)
 
     # 2. Assemble devices: anything that echoed or has a complete ARP entry, plus
     # self. Every candidate is a swept host address or one of ours.
