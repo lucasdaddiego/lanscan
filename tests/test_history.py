@@ -51,6 +51,14 @@ def test_load_valid(hist_path):
     assert history.load() == {"AA:BB": {"first_seen": 1.0}}
 
 
+def test_load_drops_entries_that_are_not_objects(hist_path):
+    # A hand-edited file: merge() used to call .get() on the 5 and fail every
+    # scan (the TUI's "Scan failed" toast each cycle, `--once` exit 1).
+    hist_path.parent.mkdir(parents=True)
+    hist_path.write_text(json.dumps({"AA": 5, "BB": {"first_seen": 1.0}, "CC": [1]}))
+    assert history.load() == {"BB": {"first_seen": 1.0}}
+
+
 # ---- save -----------------------------------------------------------------
 def test_save_round_trips(hist_path):
     history.save({"AA:BB": {"first_seen": 1.0, "last_seen": 2.0}})
@@ -134,6 +142,24 @@ def test_merge_returning_unnamed_keeps_stored_name_and_missing_first_seen():
     assert dev.ever_seen is True
 
 
+@pytest.mark.parametrize("bad", ["yesterday", None, True, [1]])
+def test_merge_replaces_a_non_numeric_first_seen(bad):
+    # A string first_seen used to reach the TUI's `time.time() - first_seen`
+    # and crash the detail pane.
+    records = {"AA:BB:CC:DD:EE:FF": {"first_seen": bad, "last_seen": 1.0}}
+    dev = Device(ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF")
+    history.merge(records, [dev], now=100.0)
+    assert dev.first_seen == 100.0
+    assert records["AA:BB:CC:DD:EE:FF"]["first_seen"] == 100.0
+
+
+def test_merge_keeps_an_integer_first_seen_as_float():
+    records = {"AA:BB:CC:DD:EE:FF": {"first_seen": 50, "last_seen": 60}}
+    dev = Device(ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF")
+    history.merge(records, [dev], now=100.0)
+    assert dev.first_seen == 50.0 and isinstance(dev.first_seen, float)
+
+
 def test_merge_defaults_now_to_wall_clock(monkeypatch):
     monkeypatch.setattr(history.time, "time", lambda: 777.0)
     records = {}
@@ -154,6 +180,12 @@ def test_merge_prunes_to_cap(monkeypatch):
     out = history.merge(records, [dev], now=99.0)
     assert set(out) == {"mid", "NEW"}      # kept the 2 most-recently-seen
     assert "old" not in out
+
+
+def test_prune_treats_a_non_numeric_last_seen_as_oldest(monkeypatch):
+    monkeypatch.setattr(history, "MAX_RECORDS", 1)
+    records = {"bad": {"last_seen": "x"}, "good": {"last_seen": 5.0}}
+    assert set(history._prune(records)) == {"good"}   # no TypeError from sorted()
 
 
 def test_prune_under_cap_is_identity():
