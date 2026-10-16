@@ -47,7 +47,9 @@ lanscan --once --json | jq -r '.devices[] | select(.open_ports | index(22)) | "\
 ```
 
 Inside the TUI, `e` exports the current list to a timestamped `lanscan-*.json`
-(a bare device array) in the working directory.
+in the working directory: the same document `--once --json` prints, so one jq
+filter reads both. (Exports made before 2026-10-15 are a bare device array:
+read them with `.[]` instead of `.devices[]`.)
 
 Useful flags: `--interface en0`, `--kind wifi|ethernet`, `--no-resolve`
 (skip reverse DNS), `--no-mdns`, `--no-ssdp`, `--no-ports`, `--no-http`,

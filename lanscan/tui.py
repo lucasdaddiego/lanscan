@@ -32,6 +32,7 @@ from textual.worker import Worker
 from . import history, launch, net, ports, vendors
 from .engine import scan
 from .models import Device, Interface
+from .oneshot import document
 
 if TYPE_CHECKING:  # imported lazily at runtime so --no-mdns never loads zeroconf
     from .discovery import MdnsDiscovery
@@ -240,6 +241,7 @@ class LanScanApp(App[None]):
         self._persist = not args.no_history
         self._ifaces: list[Interface] = []
         self._devices: list[Device] = []
+        self._devices_ifaces: list[Interface] = []  # the interfaces _devices came from
         self._known: set[str] = set()
         self._new: set[str] = set()
         self._scanning = False
@@ -383,6 +385,7 @@ class LanScanApp(App[None]):
             if d.ip in self._full_ports:
                 d.open_ports = sorted(set(d.open_ports) | set(self._full_ports[d.ip]))
         self._devices = devices
+        self._devices_ifaces = list(self._ifaces)  # this scan's (set when it started)
         self._refresh_table()
 
     # ---- master list ----------------------------------------------------
@@ -724,7 +727,8 @@ class LanScanApp(App[None]):
             return
         path = Path.cwd() / f"lanscan-{time.strftime('%Y%m%d-%H%M%S')}.json"
         try:
-            path.write_text(json.dumps([d.as_dict() for d in self._devices], indent=2))
+            doc = document(self._devices_ifaces, self._devices)
+            path.write_text(json.dumps(doc, indent=2) + "\n")
         except OSError as exc:
             self.notify(f"Export failed: {exc}", title="Export", severity="error",
                         markup=False)

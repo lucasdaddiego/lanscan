@@ -77,14 +77,19 @@ def _print_table(devices: list[Device], out: TextIO) -> None:
               f"{_cell(name, 30)} {ports}".rstrip(), file=out)
 
 
-def _print_json(ifaces: list[Interface], devices: list[Device], out: TextIO) -> None:
-    doc = {
+def document(ifaces: list[Interface], devices: list[Device]) -> dict[str, object]:
+    """The JSON document `--once --json` prints and the TUI's `e` export writes:
+    ``version``, ``ts`` (UTC, ISO-8601), ``interfaces`` and ``devices``."""
+    return {
         "version": __version__,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "interfaces": [asdict(i) for i in ifaces],
         "devices": [d.as_dict() for d in devices],
     }
-    json.dump(doc, out, indent=2)
+
+
+def _print_json(ifaces: list[Interface], devices: list[Device], out: TextIO) -> None:
+    json.dump(document(ifaces, devices), out, indent=2)
     out.write("\n")
 
 

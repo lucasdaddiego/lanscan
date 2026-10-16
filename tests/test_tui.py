@@ -5,6 +5,7 @@ behaviour driven through Textual's ``run_test()`` pilot with the scan engine and
 mDNS mocked out.
 """
 import asyncio
+import json
 import time
 
 import pytest
@@ -437,13 +438,19 @@ async def test_on_progress(monkeypatch):
 async def test_actions_export(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     app = make_app(monkeypatch, devices=[Device(ip="192.168.0.1", mac="A0:BB:CC:DD:EE:01")])
+    iface = Interface("en0", "Wi-Fi", "wifi", "192.168.0.10", 24, "192.168.0.0/24")
+    monkeypatch.setattr(tui.net, "discover_interfaces", lambda **kw: [iface])
     async with app.run_test() as pilot:
         await run_scan(app, pilot)
         app.action_export()
         await pilot.pause()
         exports = list(tmp_path.glob("lanscan-*.json"))
         assert len(exports) == 1
-        assert "192.168.0.1" in exports[0].read_text()
+        doc = json.loads(exports[0].read_text())
+        # The same document `lanscan --once --json` prints.
+        assert sorted(doc) == ["devices", "interfaces", "ts", "version"]
+        assert [d["ip"] for d in doc["devices"]] == ["192.168.0.1"]
+        assert [i["device"] for i in doc["interfaces"]] == ["en0"]
 
 
 async def test_export_nothing(monkeypatch, tmp_path):
