@@ -135,7 +135,7 @@ step, so `make install` never touches the network. Re-run it to refresh.
 ## Requirements
 
 macOS or Linux, Python 3.15, and [`uv`](https://docs.astral.sh/uv/) (`brew install uv`).
-`make install` creates `.venv`, installs the deps (`textual`, `zeroconf`,
+`make install` creates `.venv`, installs the deps (`textual`, `rich`, `zeroconf`,
 `ifaddr`, `platformdirs`) at exactly the versions pinned in `uv.lock`, and
 symlinks `lanscan` into `~/.bin` — add that to your `PATH` to run `lanscan`
 from anywhere (otherwise use `make run`). Manual equivalent:

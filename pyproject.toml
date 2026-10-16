@@ -22,6 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "textual>=8.0",
+    "rich>=15.0",  # imported directly (tui, oneshot), not only through textual
     "zeroconf>=0.140",
     "ifaddr>=0.1.7",
     "platformdirs>=4.0",
