@@ -3,7 +3,10 @@ name = "lanscan"
 version = "0.1.0"
 description = "Discover devices on your local LAN (Wi-Fi + Ethernet) with a live TUI."
 readme = "README.md"
-requires-python = ">=3.15"
+# Floor stays 3.14 although lanscan runs and is tested on 3.15 (Makefile, CI):
+# Dependabot's uv updater rejects a ">=3.15" project (supports up to 3.14.*,
+# 2026-10-15), so a 3.15 floor would stop the weekly lock refresh.
+requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Lucas Daddiego" }]
@@ -15,6 +18,7 @@ classifiers = [
     "Operating System :: MacOS :: MacOS X",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: 3 :: Only",
     "Topic :: System :: Networking :: Monitoring",
@@ -75,7 +79,7 @@ exclude_lines = [
 ]
 
 [tool.mypy]
-python_version = "3.15"
+python_version = "3.14"  # check against the floor, not the runtime
 files = ["lanscan"]
 # The CI gate (`make lint`, the lint job). strict also turns on
 # warn_unused_ignores and warn_redundant_casts.
@@ -87,7 +91,7 @@ line-length = 100
 [tool.ruff.lint]
 select = [
     "E", "F", "W", "I",  # pycodestyle / pyflakes / isort
-    "UP",                # pyupgrade — we're 3.15-only, so use what that buys
+    "UP",                # pyupgrade — we're 3.14+, so use what that buys
     "B",                 # bugbear
     "SIM",               # simplify
     "C4",                # comprehensions
