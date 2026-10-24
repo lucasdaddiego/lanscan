@@ -5,7 +5,7 @@ description = "Discover devices on your local LAN (Wi-Fi + Ethernet) with a live
 readme = "README.md"
 # Floor stays 3.14 although lanscan runs and is tested on 3.15 (Makefile, CI):
 # Dependabot's uv updater rejects a ">=3.15" project (supports up to 3.14.*,
-# 2026-10-15), so a 3.15 floor would stop the weekly lock refresh.
+# 2026-10-15, still 3.14.x on 2026-10-24), so a 3.15 floor would stop the weekly lock refresh.
 requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
