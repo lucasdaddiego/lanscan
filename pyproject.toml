@@ -29,7 +29,7 @@ dependencies = [
     "rich>=15.0",  # imported directly (tui, oneshot), not only through textual
     "zeroconf>=0.140",
     "ifaddr>=0.1.7",
-    "platformdirs>=4.0",
+    "platformdirs>=4.14.0",
 ]
 
 [project.urls]
@@ -43,9 +43,9 @@ lanscan = "lanscan.__main__:main"
 # PEP 735 dependency group: `uv pip install -e . --group dev` / `uv sync --group dev`.
 [dependency-groups]
 dev = [
-    "mypy>=2.4",
-    "pytest>=9.0",
-    "pytest-asyncio>=1.0",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1",
     "pytest-cov>=7.0",
 ]
 
