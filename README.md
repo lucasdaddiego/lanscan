@@ -177,7 +177,7 @@ macOS, and runs in seconds. 100% line **and** branch coverage is enforced.
 ```sh
 make dev      # install the locked dev deps (pytest, pytest-asyncio, coverage, mypy) into .venv
 make test     # run the suite — fails if coverage drops below 100%
-make lint     # ruff + mypy --strict
+make lint     # ruff check + ruff format --check + mypy --strict
 ```
 
 GitHub Actions runs the same suite plus ruff and mypy on every push and PR, on

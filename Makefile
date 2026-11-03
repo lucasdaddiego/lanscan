@@ -44,8 +44,9 @@ lock: ## Re-resolve uv.lock after changing dependencies in pyproject.toml
 test: dev ## Run the test suite (enforces 100% coverage)
 	@$(PY) -m pytest --cov=lanscan --cov-report=term-missing
 
-lint: dev ## ruff (same version CI pins) + mypy --strict
+lint: dev ## ruff check + format --check (same version CI pins) + mypy --strict
 	@uvx ruff@$(RUFF_VERSION) check .
+	@uvx ruff@$(RUFF_VERSION) format --check .
 	@$(PY) -m mypy
 
 clean: ## Remove caches and build artifacts
