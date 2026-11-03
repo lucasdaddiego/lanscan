@@ -7,6 +7,7 @@ and keep labelling a device by its last known name when it's nameless this run
 (sleepy IoT that only advertises now and then). Stored as JSON under the user
 data dir: best-effort, atomic, and capped so it can't grow without bound.
 """
+
 import json
 import os
 import time
@@ -71,8 +72,9 @@ def save(records: dict[str, Record]) -> None:
         pass
 
 
-def merge(records: dict[str, Record], devices: list[Device],
-          now: float | None = None) -> dict[str, Record]:
+def merge(
+    records: dict[str, Record], devices: list[Device], now: float | None = None
+) -> dict[str, Record]:
     """Fold the current scan into history; stamp each device's first_seen / ever_seen.
 
     A device unseen in any prior run gets ``ever_seen = False`` and ``first_seen =
@@ -106,6 +108,7 @@ def _prune(records: dict[str, Record]) -> dict[str, Record]:
     """Keep only the most-recently-seen MAX_RECORDS entries."""
     if len(records) <= MAX_RECORDS:
         return records
-    keep = sorted(records.items(), key=lambda kv: _num(kv[1].get("last_seen"), 0.0),
-                  reverse=True)[:MAX_RECORDS]
+    keep = sorted(records.items(), key=lambda kv: _num(kv[1].get("last_seen"), 0.0), reverse=True)[
+        :MAX_RECORDS
+    ]
     return dict(keep)

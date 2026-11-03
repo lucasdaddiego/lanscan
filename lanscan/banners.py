@@ -6,6 +6,7 @@ panels routinely identify themselves there even when mDNS and reverse-DNS don't.
 Best-effort throughout: any failure yields no banner rather than breaking the scan.
 No root, no extra dependencies.
 """
+
 import asyncio
 import contextlib
 import html
@@ -32,25 +33,35 @@ def _tls_context() -> ssl.SSLContext:
     global _TLS_CTX
     if _TLS_CTX is None:
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False          # must precede verify_mode = CERT_NONE
+        ctx.check_hostname = False  # must precede verify_mode = CERT_NONE
         ctx.verify_mode = ssl.CERT_NONE
         _TLS_CTX = ctx
     return _TLS_CTX
 
 
-async def fetch(host: str, port: int, path: str = "/", *, tls: bool = False,
-                timeout: float = 2.0, max_bytes: int = 65536) -> Response | None:
+async def fetch(
+    host: str,
+    port: int,
+    path: str = "/",
+    *,
+    tls: bool = False,
+    timeout: float = 2.0,
+    max_bytes: int = 65536,
+) -> Response | None:
     """One HTTP/1.0 GET. Returns (status, headers, body) or None on any failure."""
     ctx = _tls_context() if tls else None
     loop = asyncio.get_running_loop()
     try:
         reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port, ssl=ctx), timeout=timeout)
+            asyncio.open_connection(host, port, ssl=ctx), timeout=timeout
+        )
     except OSError:  # includes TimeoutError
         return None
     try:
-        req = (f"GET {path} HTTP/1.0\r\nHost: {host}\r\n"
-               "User-Agent: lanscan\r\nConnection: close\r\nAccept: */*\r\n\r\n")
+        req = (
+            f"GET {path} HTTP/1.0\r\nHost: {host}\r\n"
+            "User-Agent: lanscan\r\nConnection: close\r\nAccept: */*\r\n\r\n"
+        )
         writer.write(req.encode("latin-1", "replace"))
         await asyncio.wait_for(writer.drain(), timeout=timeout)
         # One read() returns as soon as *any* byte is buffered, so a server that
@@ -64,11 +75,11 @@ async def fetch(host: str, port: int, path: str = "/", *, tls: bool = False,
         while size < max_bytes:
             try:
                 chunk = await asyncio.wait_for(
-                    reader.read(max_bytes - size),
-                    timeout=max(0.0, deadline - loop.time()))
+                    reader.read(max_bytes - size), timeout=max(0.0, deadline - loop.time())
+                )
             except TimeoutError:
                 break
-            if not chunk:                       # EOF
+            if not chunk:  # EOF
                 break
             chunks.append(chunk)
             size += len(chunk)
@@ -91,7 +102,7 @@ def _split_response(raw: bytes) -> Response | None:
     parts = lines[0].split(None, 2)
     try:
         status = int(parts[1])
-    except (IndexError, ValueError):
+    except IndexError, ValueError:
         return None
     headers: dict[str, str] = {}
     for line in lines[1:]:
@@ -111,8 +122,9 @@ def _title(body: bytes) -> str | None:
     return text or None
 
 
-async def identify(ip: str, open_ports: list[int], *,
-                   timeout: float = 2.0) -> tuple[str | None, str | None]:
+async def identify(
+    ip: str, open_ports: list[int], *, timeout: float = 2.0
+) -> tuple[str | None, str | None]:
     """Best HTTP banner for a device as ``(server, title)`` (each str | None).
 
     Probes the single most-preferred open web port; no web port -> (None, None).

@@ -1,4 +1,5 @@
 """Tests for lanscan.history — persistent device history."""
+
 import json
 import os
 import stat
@@ -66,7 +67,7 @@ def test_save_round_trips(hist_path):
 
 
 def test_save_is_private_to_the_user(hist_path):
-    old = os.umask(0o000)                            # a permissive umask must not leak
+    old = os.umask(0o000)  # a permissive umask must not leak
     try:
         history.save({"AA:BB": {}})
     finally:
@@ -78,7 +79,7 @@ def test_save_tightens_a_leftover_tmp_file(hist_path):
     hist_path.parent.mkdir(parents=True)
     leftover = hist_path.with_suffix(".tmp")
     leftover.write_text("{}")
-    leftover.chmod(0o644)                            # O_CREAT's mode won't apply here
+    leftover.chmod(0o644)  # O_CREAT's mode won't apply here
     history.save({"AA:BB": {}})
     assert stat.S_IMODE(hist_path.stat().st_mode) == 0o600
     assert not leftover.exists()
@@ -105,20 +106,20 @@ def test_merge_returning_device():
     dev = Device(ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF", mdns_name="Box")
     history.merge(records, [dev], now=100.0)
     rec = records["AA:BB:CC:DD:EE:FF"]
-    assert rec["first_seen"] == 50.0       # preserved
-    assert rec["last_seen"] == 100.0       # bumped
-    assert rec["name"] == "Box"            # refreshed from the live name
-    assert dev.first_seen == 50.0          # device inherits stored first_seen
+    assert rec["first_seen"] == 50.0  # preserved
+    assert rec["last_seen"] == 100.0  # bumped
+    assert rec["name"] == "Box"  # refreshed from the live name
+    assert dev.first_seen == 50.0  # device inherits stored first_seen
     assert dev.ever_seen is True
-    assert dev.remembered_name is None     # it has a live name; nothing to remember
+    assert dev.remembered_name is None  # it has a live name; nothing to remember
 
 
 def test_merge_returning_nameless_device_gets_its_last_known_name():
     records = {"AA:BB:CC:DD:EE:FF": {"first_seen": 50.0, "last_seen": 60.0, "name": "Kettle"}}
-    dev = Device(ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF")   # no name this run
+    dev = Device(ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF")  # no name this run
     history.merge(records, [dev], now=100.0)
     assert dev.remembered_name == "Kettle"
-    assert dev.name == "Kettle"                            # surfaces as the display name
+    assert dev.name == "Kettle"  # surfaces as the display name
     assert records["AA:BB:CC:DD:EE:FF"]["name"] == "Kettle"  # stored name kept
 
 
@@ -137,8 +138,8 @@ def test_merge_returning_unnamed_keeps_stored_name_and_missing_first_seen():
     dev = Device(ip="10.0.0.9")  # no mac, no name
     history.merge(records, [dev], now=200.0)
     rec = records["ip:10.0.0.9"]
-    assert "name" not in rec               # device has no name -> stored name untouched
-    assert dev.first_seen == 200.0         # missing first_seen -> falls back to now
+    assert "name" not in rec  # device has no name -> stored name untouched
+    assert dev.first_seen == 200.0  # missing first_seen -> falls back to now
     assert dev.ever_seen is True
 
 
@@ -178,14 +179,14 @@ def test_merge_prunes_to_cap(monkeypatch):
     # Add a third (newest) device; the oldest ("old") should be pruned.
     dev = Device(ip="10.0.0.3", mac="NEW")
     out = history.merge(records, [dev], now=99.0)
-    assert set(out) == {"mid", "NEW"}      # kept the 2 most-recently-seen
+    assert set(out) == {"mid", "NEW"}  # kept the 2 most-recently-seen
     assert "old" not in out
 
 
 def test_prune_treats_a_non_numeric_last_seen_as_oldest(monkeypatch):
     monkeypatch.setattr(history, "MAX_RECORDS", 1)
     records = {"bad": {"last_seen": "x"}, "good": {"last_seen": 5.0}}
-    assert set(history._prune(records)) == {"good"}   # no TypeError from sorted()
+    assert set(history._prune(records)) == {"good"}  # no TypeError from sorted()
 
 
 def test_prune_under_cap_is_identity():

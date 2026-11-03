@@ -1,4 +1,5 @@
 """Tests for lanscan.__main__ (CLI entry point) and the package __init__."""
+
 import pytest
 
 import lanscan
@@ -16,17 +17,43 @@ def test_parser_defaults():
     assert args.kind is None
     assert args.timeout == 1.0
     assert args.interval == 30.0
-    assert not any([args.no_resolve, args.no_mdns, args.no_ports, args.no_ssdp,
-                    args.no_http, args.no_history, args.update_vendors, args.once,
-                    args.json])
+    assert not any(
+        [
+            args.no_resolve,
+            args.no_mdns,
+            args.no_ports,
+            args.no_ssdp,
+            args.no_http,
+            args.no_history,
+            args.update_vendors,
+            args.once,
+            args.json,
+        ]
+    )
 
 
 def test_parser_all_flags():
-    args = main_mod._build_parser().parse_args([
-        "--interface", "en0", "--kind", "wifi", "--no-resolve", "--no-mdns",
-        "--no-ports", "--no-ssdp", "--no-http", "--no-history", "--timeout", "2.5",
-        "--interval", "5", "--update-vendors", "--once", "--json",
-    ])
+    args = main_mod._build_parser().parse_args(
+        [
+            "--interface",
+            "en0",
+            "--kind",
+            "wifi",
+            "--no-resolve",
+            "--no-mdns",
+            "--no-ports",
+            "--no-ssdp",
+            "--no-http",
+            "--no-history",
+            "--timeout",
+            "2.5",
+            "--interval",
+            "5",
+            "--update-vendors",
+            "--once",
+            "--json",
+        ]
+    )
     assert args.interface == "en0"
     assert args.kind == "wifi"
     assert args.no_resolve and args.no_mdns and args.no_ports and args.update_vendors
@@ -36,15 +63,18 @@ def test_parser_all_flags():
     assert args.interval == 5.0
 
 
-@pytest.mark.parametrize("argv,message", [
-    (["--interval", "0"], "--interval: must be greater than 0"),
-    (["--interval", "-5"], "--interval: must be greater than 0"),
-    (["--interval", "nan"], "--interval: must be greater than 0"),
-    (["--interval", "x"], "--interval: invalid number: 'x'"),
-    (["--timeout", "0"], "--timeout: must be greater than 0"),
-    (["--timeout", "-1"], "--timeout: must be greater than 0"),
-    (["--timeout", "nan"], "--timeout: must be greater than 0"),
-])
+@pytest.mark.parametrize(
+    "argv,message",
+    [
+        (["--interval", "0"], "--interval: must be greater than 0"),
+        (["--interval", "-5"], "--interval: must be greater than 0"),
+        (["--interval", "nan"], "--interval: must be greater than 0"),
+        (["--interval", "x"], "--interval: invalid number: 'x'"),
+        (["--timeout", "0"], "--timeout: must be greater than 0"),
+        (["--timeout", "-1"], "--timeout: must be greater than 0"),
+        (["--timeout", "nan"], "--timeout: must be greater than 0"),
+    ],
+)
 def test_parser_rejects_bad_numbers(argv, message, capsys):
     with pytest.raises(SystemExit) as exc:
         main_mod._build_parser().parse_args(argv)

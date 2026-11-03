@@ -3,6 +3,7 @@
 All of macOS's `networksetup` / `route` / `ifconfig` shell-outs and `ifaddr`'s
 adapter enumeration are mocked, so this runs anywhere.
 """
+
 from types import SimpleNamespace
 
 import pytest
@@ -18,37 +19,54 @@ def _run_returns(text):
 def _run_raises(exc):
     def _raise(*a, **k):
         raise exc
+
     return _raise
 
 
 # ---- pure helpers ---------------------------------------------------------
-@pytest.mark.parametrize("port,kind", [
-    ("Wi-Fi", "wifi"),
-    ("AirPort", "wifi"),
-    ("Ethernet", "ethernet"),
-    ("Thunderbolt Ethernet", "ethernet"),
-    ("USB 10/100/1000 LAN", "ethernet"),
-    ("Thunderbolt Bridge", None),
-    ("Bluetooth PAN", None),
-])
+@pytest.mark.parametrize(
+    "port,kind",
+    [
+        ("Wi-Fi", "wifi"),
+        ("AirPort", "wifi"),
+        ("Ethernet", "ethernet"),
+        ("Thunderbolt Ethernet", "ethernet"),
+        ("USB 10/100/1000 LAN", "ethernet"),
+        ("Thunderbolt Bridge", None),
+        ("Bluetooth PAN", None),
+    ],
+)
 def test_classify(port, kind):
     assert net._classify(port) == kind
 
 
-@pytest.mark.parametrize("device,virtual", [
-    ("en0", False), ("bridge100", True), ("vmenet0", True), ("utun3", True),
-    ("awdl0", True), ("llw0", True), ("anpi0", True), ("ap1", True), ("lo0", False),
-])
+@pytest.mark.parametrize(
+    "device,virtual",
+    [
+        ("en0", False),
+        ("bridge100", True),
+        ("vmenet0", True),
+        ("utun3", True),
+        ("awdl0", True),
+        ("llw0", True),
+        ("anpi0", True),
+        ("ap1", True),
+        ("lo0", False),
+    ],
+)
 def test_is_virtual_name(device, virtual):
     assert net._is_virtual_name(device) is virtual
 
 
-@pytest.mark.parametrize("cidr,ok", [
-    ("192.168.0.0/24", True),     # 256 addrs
-    ("10.0.0.0/22", True),        # 1024 addrs (the boundary)
-    ("10.0.0.0/16", False),       # too large
-    ("not-a-cidr", False),        # ValueError
-])
+@pytest.mark.parametrize(
+    "cidr,ok",
+    [
+        ("192.168.0.0/24", True),  # 256 addrs
+        ("10.0.0.0/22", True),  # 1024 addrs (the boundary)
+        ("10.0.0.0/16", False),  # too large
+        ("not-a-cidr", False),  # ValueError
+    ],
+)
 def test_sweepable(cidr, ok):
     assert net.sweepable(cidr) is ok
 
@@ -94,8 +112,7 @@ def test_hardware_ports_error(monkeypatch):
 
 
 def test_default_gateway_match(monkeypatch):
-    monkeypatch.setattr(net.subprocess, "run",
-                        _run_returns("   gateway: 192.168.0.1\n"))
+    monkeypatch.setattr(net.subprocess, "run", _run_returns("   gateway: 192.168.0.1\n"))
     assert net._default_gateway_macos() == "192.168.0.1"
 
 
@@ -105,8 +122,7 @@ def test_default_gateway_no_match(monkeypatch):
 
 
 def test_default_gateway_error(monkeypatch):
-    monkeypatch.setattr(net.subprocess, "run",
-                        _run_raises(net.subprocess.SubprocessError()))
+    monkeypatch.setattr(net.subprocess, "run", _run_raises(net.subprocess.SubprocessError()))
     assert net._default_gateway_macos() is None
 
 
@@ -141,12 +157,24 @@ def test_ifconfig_facts_error(monkeypatch):
 
 
 # ---- Linux backends -------------------------------------------------------
-@pytest.mark.parametrize("device,virtual", [
-    ("eth0", False), ("enp3s0", False), ("wlan0", False),
-    ("docker0", True), ("veth1a2b", True), ("virbr0", True), ("vnet3", True),
-    ("tun0", True), ("tap0", True), ("wg0", True), ("tailscale0", True),
-    ("br-1a2b3c", True), ("cni-podman0", True),
-])
+@pytest.mark.parametrize(
+    "device,virtual",
+    [
+        ("eth0", False),
+        ("enp3s0", False),
+        ("wlan0", False),
+        ("docker0", True),
+        ("veth1a2b", True),
+        ("virbr0", True),
+        ("vnet3", True),
+        ("tun0", True),
+        ("tap0", True),
+        ("wg0", True),
+        ("tailscale0", True),
+        ("br-1a2b3c", True),
+        ("cni-podman0", True),
+    ],
+)
 def test_is_virtual_name_linux(device, virtual):
     assert net._is_virtual_name(device) is virtual
 
@@ -181,9 +209,9 @@ _IP_LINK = (
     "    link/ether 02:42:aa:bb:cc:dd brd ff:ff:ff:ff:ff:ff\n"
     "5: veth7@if4: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 master docker0\\"
     "    link/ether 12:34:56:78:9a:bc brd ff:ff:ff:ff:ff:ff\n"
-    "6: tun9: <POINTOPOINT,UP> mtu 1500 link/ether\n"   # truncated: no MAC follows
-    "42:\n"                                   # index but no body -> skipped
-    "garbage without an index\n"             # non-numeric first token -> skipped
+    "6: tun9: <POINTOPOINT,UP> mtu 1500 link/ether\n"  # truncated: no MAC follows
+    "42:\n"  # index but no body -> skipped
+    "garbage without an index\n"  # non-numeric first token -> skipped
 )
 
 
@@ -221,8 +249,9 @@ def test_hardware_ports_linux(monkeypatch):
 
 
 def test_default_gateway_linux_match(monkeypatch):
-    monkeypatch.setattr(net.subprocess, "run",
-                        _run_returns("default via 192.168.1.1 dev eth0 proto dhcp\n"))
+    monkeypatch.setattr(
+        net.subprocess, "run", _run_returns("default via 192.168.1.1 dev eth0 proto dhcp\n")
+    )
     assert net._default_gateway_linux() == "192.168.1.1"
 
 
@@ -238,11 +267,11 @@ def test_default_gateway_linux_error(monkeypatch):
 
 _IP_ADDR = (
     "2: eth0    inet 192.168.0.10/24 brd 192.168.0.255 scope global eth0\n"
-    "3: wlan0    inet6 fe80::1/64 scope link \n"        # inet6 -> skipped
+    "3: wlan0    inet6 fe80::1/64 scope link \n"  # inet6 -> skipped
     "4: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0\n"
     "5: virbr0    inet 192.168.122.1/24 scope global virbr0\n"
-    "6: tun0    inet bogus scope global tun0\n"          # virtual + bad cidr -> ValueError
-    "short line\n"                                       # < 4 tokens -> skipped
+    "6: tun0    inet bogus scope global tun0\n"  # virtual + bad cidr -> ValueError
+    "short line\n"  # < 4 tokens -> skipped
 )
 
 
@@ -250,9 +279,9 @@ def test_ifconfig_facts_linux_parsing(monkeypatch):
     monkeypatch.setattr(net, "_ip_link_rows", lambda: net._parse_ip_link(_IP_LINK))
     monkeypatch.setattr(net.subprocess, "run", _run_returns(_IP_ADDR))
     members, virtual_subnets, macs = net._ifconfig_facts_linux()
-    assert members == {"veth7"}                          # the only enslaved link
+    assert members == {"veth7"}  # the only enslaved link
     assert macs["eth0"] == "00:11:22:33:44:55"
-    assert "lo" not in macs                               # loopback has no link/ether
+    assert "lo" not in macs  # loopback has no link/ether
     # eth0 is real (skipped); docker0 + virbr0 are virtual; tun0's bad CIDR swallowed.
     assert virtual_subnets == {"172.17.0.0/16", "192.168.122.0/24"}
 
@@ -289,7 +318,6 @@ def test_default_gateway_dispatch(monkeypatch, linux, expected):
     assert net.default_gateway() == expected
 
 
-
 # ---- discover_interfaces (the orchestrator) -------------------------------
 class _FakeIP:
     def __init__(self, ip, prefix, is_ipv4=True):
@@ -309,28 +337,32 @@ def fake_discovery(monkeypatch):
     ports = {
         "en0": ("Wi-Fi", "wifi"),
         "en3": ("Ethernet", "ethernet"),
-        "bridge0": ("Weird", "ethernet"),   # virtual-named yet listed -> skipped
+        "bridge0": ("Weird", "ethernet"),  # virtual-named yet listed -> skipped
         "en1": ("Thunderbolt", "ethernet"),  # bridge member -> skipped
     }
     members = {"en1"}
     virtual_subnets = {"192.168.97.0/24"}
     monkeypatch.setattr(net, "_hardware_ports", lambda: ports)
-    monkeypatch.setattr(net, "_ifconfig_facts",
-                        lambda: (members, virtual_subnets, {"en0": "aa:bb:cc:dd:ee:ff"}))
+    monkeypatch.setattr(
+        net, "_ifconfig_facts", lambda: (members, virtual_subnets, {"en0": "aa:bb:cc:dd:ee:ff"})
+    )
 
     adapters = [
-        _FakeAdapter("lo0", []),                       # not in ports -> skip
-        _FakeAdapter("en1", [_FakeIP("192.168.1.5", 24)]),   # member -> skip
+        _FakeAdapter("lo0", []),  # not in ports -> skip
+        _FakeAdapter("en1", [_FakeIP("192.168.1.5", 24)]),  # member -> skip
         _FakeAdapter("bridge0", [_FakeIP("192.168.2.5", 24)]),  # virtual -> skip
-        _FakeAdapter("en0", [
-            _FakeIP(("fe80::1",), 64, is_ipv4=False),   # not IPv4 -> skip
-            _FakeIP(("x",), 24, is_ipv4=True),          # addr not str -> skip
-            _FakeIP("169.254.1.1", 16),                 # link-local -> skip
-            _FakeIP("192.168.0.10", 99),                # bad prefix (ValueError) -> skip
-            _FakeIP("8.8.8.8", 24),                     # public -> skip
-            _FakeIP("192.168.97.5", 24),                # virtual subnet -> skip
-            _FakeIP("192.168.0.10", 24),                # keeper
-        ]),
+        _FakeAdapter(
+            "en0",
+            [
+                _FakeIP(("fe80::1",), 64, is_ipv4=False),  # not IPv4 -> skip
+                _FakeIP(("x",), 24, is_ipv4=True),  # addr not str -> skip
+                _FakeIP("169.254.1.1", 16),  # link-local -> skip
+                _FakeIP("192.168.0.10", 99),  # bad prefix (ValueError) -> skip
+                _FakeIP("8.8.8.8", 24),  # public -> skip
+                _FakeIP("192.168.97.5", 24),  # virtual subnet -> skip
+                _FakeIP("192.168.0.10", 24),  # keeper
+            ],
+        ),
         _FakeAdapter("en3", [_FakeIP("10.0.0.2", 24)]),  # keeper (ethernet)
     ]
     monkeypatch.setattr(net.ifaddr, "get_adapters", lambda: adapters)

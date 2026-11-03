@@ -10,6 +10,7 @@ TVs, media renderers, routers, NAS boxes and a lot of IoT kit show up here.
 Best-effort throughout — any failure yields no UPnP data rather than breaking
 the scan. No root, no extra dependencies.
 """
+
 import asyncio
 import html
 import re
@@ -100,14 +101,15 @@ async def _enrich(ip: str, info: UpnpInfo, *, timeout: float) -> None:
     if not loc:
         return
     parsed = urlparse(loc)
-    if parsed.hostname != ip:       # missing, a name, or someone else's address
+    if parsed.hostname != ip:  # missing, a name, or someone else's address
         return
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     path = parsed.path or "/"
     if parsed.query:
         path = f"{path}?{parsed.query}"
-    res = await banners.fetch(parsed.hostname, port, path,
-                              tls=parsed.scheme == "https", timeout=timeout)
+    res = await banners.fetch(
+        parsed.hostname, port, path, tls=parsed.scheme == "https", timeout=timeout
+    )
     if res is None:
         return
     _status, _headers, body = res
@@ -124,8 +126,7 @@ def _multicast_socket(local_ip: str | None) -> socket.socket:
     try:
         sock.setblocking(False)
         if local_ip:
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
-                            socket.inet_aton(local_ip))
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(local_ip))
         sock.bind((local_ip or "0.0.0.0", 0))
     except OSError:
         sock.close()
@@ -133,8 +134,9 @@ def _multicast_socket(local_ip: str | None) -> socket.socket:
     return sock
 
 
-async def _open_transports(loop: asyncio.AbstractEventLoop, collector: _Collector,
-                           local_ips: Iterable[str]) -> list[asyncio.DatagramTransport]:
+async def _open_transports(
+    loop: asyncio.AbstractEventLoop, collector: _Collector, local_ips: Iterable[str]
+) -> list[asyncio.DatagramTransport]:
     """One transport per interface address (all feeding `collector`); if none of
     those can be opened, a single default-route transport as a last resort."""
     transports: list[asyncio.DatagramTransport] = []
@@ -152,8 +154,9 @@ async def _open_transports(loop: asyncio.AbstractEventLoop, collector: _Collecto
     return transports
 
 
-async def probe(local_ips: Iterable[str] = (), *, timeout: float = 2.0,
-                fetch_details: bool = True) -> dict[str, UpnpInfo]:
+async def probe(
+    local_ips: Iterable[str] = (), *, timeout: float = 2.0, fetch_details: bool = True
+) -> dict[str, UpnpInfo]:
     """M-SEARCH out of each `local_ips` interface (or the default route when none
     are given) and return ``{ip: {server, location, name, model}}``.
 
@@ -176,12 +179,17 @@ async def probe(local_ips: Iterable[str] = (), *, timeout: float = 2.0,
             transport.close()
 
     result: dict[str, UpnpInfo] = {
-        ip: {"server": sanitize(h.get("server", "")) or None, "location": h.get("location"),
-             "name": None, "model": None}
+        ip: {
+            "server": sanitize(h.get("server", "")) or None,
+            "location": h.get("location"),
+            "name": None,
+            "model": None,
+        }
         for ip, h in collector.responses.items()
     }
     if fetch_details and result:
         await asyncio.gather(
             *(_enrich(ip, info, timeout=timeout) for ip, info in result.items()),
-            return_exceptions=True)
+            return_exceptions=True,
+        )
     return result

@@ -3,6 +3,7 @@
 The OS shell-outs (ping, arp) and all sockets are mocked, so the orchestration
 logic is exercised without touching the network.
 """
+
 import asyncio
 import ipaddress
 
@@ -14,6 +15,7 @@ from lanscan.models import Interface
 
 class FakeProc:
     """Stand-in for an asyncio subprocess; `hang` makes the first wait() block."""
+
     def __init__(self, rc=0, hang=False):
         self.rc = rc
         self.killed = False
@@ -32,14 +34,14 @@ class FakeProc:
 def _exec_returning(proc):
     async def _exec(*args, **kw):
         return proc
+
     return _exec
 
 
 # ---- _ping ----------------------------------------------------------------
 @pytest.mark.parametrize("rc,alive", [(0, True), (1, False)])
 async def test_ping_return_code(monkeypatch, rc, alive):
-    monkeypatch.setattr(engine.asyncio, "create_subprocess_exec",
-                        _exec_returning(FakeProc(rc=rc)))
+    monkeypatch.setattr(engine.asyncio, "create_subprocess_exec", _exec_returning(FakeProc(rc=rc)))
     ip, ok = await engine._ping("10.0.0.9", 0.1, asyncio.Semaphore(2))
     assert ip == "10.0.0.9"
     assert ok is alive
@@ -90,11 +92,11 @@ async def test_ping_cancel_kills_proc(monkeypatch):
     proc = FakeProc(hang=True)
     monkeypatch.setattr(engine.asyncio, "create_subprocess_exec", _exec_returning(proc))
     task = asyncio.create_task(engine._ping("10.0.0.9", 30.0, asyncio.Semaphore(2)))
-    await asyncio.sleep(0.02)          # let it reach the proc.wait()
+    await asyncio.sleep(0.02)  # let it reach the proc.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert proc.killed is True         # child killed, not left running
+    assert proc.killed is True  # child killed, not left running
 
 
 async def test_ping_cancel_tolerates_already_exited_proc(monkeypatch):
@@ -108,12 +110,12 @@ async def test_ping_cancel_tolerates_already_exited_proc(monkeypatch):
     await asyncio.sleep(0.02)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task                     # ProcessLookupError must not mask the cancel
+        await task  # ProcessLookupError must not mask the cancel
 
 
 # ---- ICMP socket sweep ----------------------------------------------------
 def _words_sum(pkt: bytes) -> int:
-    total = sum(int.from_bytes(pkt[i:i + 2], "big") for i in range(0, len(pkt), 2))
+    total = sum(int.from_bytes(pkt[i : i + 2], "big") for i in range(0, len(pkt), 2))
     total = (total >> 16) + (total & 0xFFFF)
     return (total + (total >> 16)) & 0xFFFF
 
@@ -121,25 +123,28 @@ def _words_sum(pkt: bytes) -> int:
 def test_checksum_known_vectors():
     assert engine._checksum(b"") == 0xFFFF
     assert engine._checksum(b"\x00\x01") == 0xFFFE
-    assert engine._checksum(b"\xff\xff\x00\x02") == 0xFFFD   # folds the carry back in
-    assert engine._checksum(b"\x01") == 0xFEFF               # odd length is zero-padded
+    assert engine._checksum(b"\xff\xff\x00\x02") == 0xFFFD  # folds the carry back in
+    assert engine._checksum(b"\x01") == 0xFEFF  # odd length is zero-padded
 
 
 def test_echo_request_is_well_formed():
-    pkt = engine._echo_request(0x1_0007)   # seq is masked to 16 bits
+    pkt = engine._echo_request(0x1_0007)  # seq is masked to 16 bits
     assert len(pkt) == 8 + len(engine._ECHO_PAYLOAD)
     assert pkt[0] == engine._ICMP_ECHO_REQUEST and pkt[1] == 0
     assert int.from_bytes(pkt[6:8], "big") == 7
-    assert _words_sum(pkt) == 0xFFFF       # a valid checksum sums to all-ones
+    assert _words_sum(pkt) == 0xFFFF  # a valid checksum sums to all-ones
 
 
-@pytest.mark.parametrize("data,alive", [
-    (b"\x45" + b"\0" * 19 + b"\x00\x00\x00\x00", True),     # macOS: IP header + reply
-    (b"\x00\x00\x00\x00\x00\x00\x00\x00", True),             # Linux: bare reply
-    (b"\x45" + b"\0" * 19 + b"\x08\x00", False),             # an echo *request*
-    (b"\x45" + b"\0" * 19, False),                            # header only, no ICMP
-    (b"", False),                                              # empty datagram
-])
+@pytest.mark.parametrize(
+    "data,alive",
+    [
+        (b"\x45" + b"\0" * 19 + b"\x00\x00\x00\x00", True),  # macOS: IP header + reply
+        (b"\x00\x00\x00\x00\x00\x00\x00\x00", True),  # Linux: bare reply
+        (b"\x45" + b"\0" * 19 + b"\x08\x00", False),  # an echo *request*
+        (b"\x45" + b"\0" * 19, False),  # header only, no ICMP
+        (b"", False),  # empty datagram
+    ],
+)
 def test_echo_collector_parses_both_framings(data, alive):
     proto = engine._EchoCollector()
     proto.datagram_received(data, ("10.0.0.9", 0))
@@ -215,9 +220,10 @@ async def test_icmp_sweep_endpoint_error_closes_socket(monkeypatch):
 
 
 async def test_icmp_sweep_sends_every_target_and_filters_replies(monkeypatch):
-    targets = [f"10.0.0.{n}" for n in range(1, 70)]   # > one send batch
+    targets = [f"10.0.0.{n}" for n in range(1, 70)]  # > one send batch
     transport, _ = _patch_icmp_endpoint(
-        monkeypatch, replies={"10.0.0.5", "10.0.0.9", "192.168.9.9"})  # last one foreign
+        monkeypatch, replies={"10.0.0.5", "10.0.0.9", "192.168.9.9"}
+    )  # last one foreign
     progress = []
     alive = await engine._icmp_sweep(targets, 0.05, lambda d, t: progress.append((d, t)))
     assert alive == {"10.0.0.5", "10.0.0.9"}
@@ -232,7 +238,7 @@ async def test_icmp_sweep_ends_early_when_everyone_answered(monkeypatch):
     loop = asyncio.get_running_loop()
     t0 = loop.time()
     assert await engine._icmp_sweep(["10.0.0.1", "10.0.0.2"], 5.0, None) == {"10.0.0.1", "10.0.0.2"}
-    assert loop.time() - t0 < 1.0        # did not wait out the 5s window
+    assert loop.time() - t0 < 1.0  # did not wait out the 5s window
 
 
 async def test_icmp_sweep_waits_out_the_window_without_progress(monkeypatch):
@@ -240,11 +246,11 @@ async def test_icmp_sweep_waits_out_the_window_without_progress(monkeypatch):
     loop = asyncio.get_running_loop()
     t0 = loop.time()
     assert await engine._icmp_sweep(["10.0.0.1"], 0.05, None) == set()
-    assert loop.time() - t0 >= 0.04          # several 0.1s-capped sleeps, no callback
+    assert loop.time() - t0 >= 0.04  # several 0.1s-capped sleeps, no callback
 
 
 async def test_icmp_sweep_honours_the_batch_pause(monkeypatch):
-    targets = [f"10.0.0.{n}" for n in range(1, 70)]   # 69 echoes -> 2 batch boundaries
+    targets = [f"10.0.0.{n}" for n in range(1, 70)]  # 69 echoes -> 2 batch boundaries
     _patch_icmp_endpoint(monkeypatch, replies=set(targets))
     loop = asyncio.get_running_loop()
     t0 = loop.time()
@@ -258,23 +264,24 @@ async def test_ping_sweep_collects_and_reports(monkeypatch):
 
     monkeypatch.setattr(engine, "_ping", fake_ping)
     progress = []
-    alive = await engine._ping_sweep(["10.0.0.1", "10.0.0.2"], 0.1, 4,
-                                     lambda d, t: progress.append((d, t)))
+    alive = await engine._ping_sweep(
+        ["10.0.0.1", "10.0.0.2"], 0.1, 4, lambda d, t: progress.append((d, t))
+    )
     assert alive == {"10.0.0.1"}
     assert progress == [(1, 2), (2, 2)]
 
 
 # ---- _reverse_dns ---------------------------------------------------------
 async def test_reverse_dns_success(monkeypatch):
-    monkeypatch.setattr(engine.socket, "gethostbyaddr",
-                        lambda ip: ("host.local", [], [ip]))
+    monkeypatch.setattr(engine.socket, "gethostbyaddr", lambda ip: ("host.local", [], [ip]))
     assert await engine._reverse_dns("10.0.0.9", 1.0) == ("10.0.0.9", "host.local")
 
 
 async def test_reverse_dns_sanitizes_the_ptr_name(monkeypatch):
     # A PTR record is set by whoever runs the resolver / the device itself.
-    monkeypatch.setattr(engine.socket, "gethostbyaddr",
-                        lambda ip: ("tv\x1b[2J\u202e.local", [], [ip]))
+    monkeypatch.setattr(
+        engine.socket, "gethostbyaddr", lambda ip: ("tv\x1b[2J\u202e.local", [], [ip])
+    )
     assert await engine._reverse_dns("10.0.0.9", 1.0) == ("10.0.0.9", "tv\u00b7[2J\u00b7.local")
 
 
@@ -311,11 +318,11 @@ this line does not match the arp pattern at all
 
 def test_read_arp_filters(monkeypatch):
     from types import SimpleNamespace
+
     monkeypatch.setattr(engine, "is_linux", lambda: False)
     targets = {f"192.168.0.{n}": "en0" for n in (1, 2, 5, 7, 9)}
     targets["224.0.0.251"] = "en0"
-    monkeypatch.setattr(engine.subprocess, "run",
-                        lambda *a, **k: SimpleNamespace(stdout=_ARP_OUT))
+    monkeypatch.setattr(engine.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=_ARP_OUT))
     table = engine.read_arp(targets)
     assert table == {
         "192.168.0.1": ("a:b:c:d:e:f", "en0"),
@@ -337,6 +344,7 @@ fe80::1 dev eth0 lladdr de:ad:be:ef:00:01 REACHABLE
 
 def test_read_arp_linux(monkeypatch):
     from types import SimpleNamespace
+
     monkeypatch.setattr(engine, "is_linux", lambda: True)
     targets = {f"192.168.0.{n}": "eth0" for n in (1, 2, 5)}
     targets["224.0.0.251"] = "eth0"
@@ -370,6 +378,7 @@ _EXITED = '{\n\t"LastExitStatus" = 0;\n};'
 
 def test_read_arp_empty_on_macos_reads_through_launchd(monkeypatch):
     from types import SimpleNamespace
+
     monkeypatch.setattr(engine, "is_linux", lambda: False)
     monkeypatch.setattr(engine.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=""))
     seen = {}
@@ -385,6 +394,7 @@ def test_read_arp_empty_on_macos_reads_through_launchd(monkeypatch):
 
 def test_read_arp_empty_on_linux_stays_empty(monkeypatch):
     from types import SimpleNamespace
+
     monkeypatch.setattr(engine, "is_linux", lambda: True)
     monkeypatch.setattr(engine.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=""))
     monkeypatch.setattr(engine, "_launchd_run", lambda *a, **k: pytest.fail("launchd ran"))
@@ -393,6 +403,7 @@ def test_read_arp_empty_on_linux_stays_empty(monkeypatch):
 
 def test_quiet_run(monkeypatch):
     from types import SimpleNamespace
+
     monkeypatch.setattr(engine.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout="ok"))
     assert engine._quiet_run(["x"]) == "ok"
 
@@ -418,6 +429,7 @@ def _fake_submit(write=True, returncode=0):
 
 def _launchctl(calls, states):
     """`_quiet_run` stand-in for `launchctl list|remove`: records the verb, replays states."""
+
     def quiet(cmd):
         calls.append(cmd[1])
         return next(states) if cmd[1] == "list" else ""
@@ -468,11 +480,9 @@ def test_ping_argv(monkeypatch, linux, flag):
     assert engine._ping_argv("10.0.0.9", 2.5) == ["ping", "-c", "1", flag, "2", "10.0.0.9"]
 
 
-
 # ---- scan (the orchestrator) ---------------------------------------------
 def _iface(mac="a0:bb:cc:dd:ee:f0"):
-    return Interface("en0", "Wi-Fi", "wifi", "192.168.0.10", 24,
-                     "192.168.0.0/24", mac=mac)
+    return Interface("en0", "Wi-Fi", "wifi", "192.168.0.10", 24, "192.168.0.0/24", mac=mac)
 
 
 class FakeMdns:
@@ -480,11 +490,20 @@ class FakeMdns:
         return {"192.168.0.1": {"name": "Router", "services": {"HTTP", "SSH"}}}
 
 
-def _install_scan_mocks(monkeypatch, *, targets, alive_icmp, arp, gateway="192.168.0.1",
-                        ssdp_snap=None, http_map=None, icmp_socket=False):
+def _install_scan_mocks(
+    monkeypatch,
+    *,
+    targets,
+    alive_icmp,
+    arp,
+    gateway="192.168.0.1",
+    ssdp_snap=None,
+    http_map=None,
+    icmp_socket=False,
+):
     """Mock every collaborator of scan(). `alive_icmp` answers via the `ping`
     fallback by default; with icmp_socket=True the socket sweep returns it."""
-    calls = {"icmp": [], "psem": []}   # (n_targets, sweep kwargs) / Semaphore sizes
+    calls = {"icmp": [], "psem": []}  # (n_targets, sweep kwargs) / Semaphore sizes
     monkeypatch.setattr(engine.net, "hosts_for", lambda ifaces: dict(targets))
     monkeypatch.setattr(engine.net, "default_gateway", lambda: gateway)
 
@@ -524,15 +543,18 @@ def _install_scan_mocks(monkeypatch, *, targets, alive_icmp, arp, gateway="192.1
     return calls
 
 
-@pytest.mark.parametrize("n,expected", [
-    (0, (0.005, 512)),       # nothing to sweep: the /24 defaults
-    (254, (0.005, 512)),     # /24
-    (256, (0.005, 512)),
-    (257, (0.010, 256)),     # anything past a /24 steps up
-    (510, (0.010, 256)),     # /23
-    (1022, (0.020, 128)),    # /22 (the sweep cap)
-    (4096, (0.080, 64)),     # floor on the connect fan-out
-])
+@pytest.mark.parametrize(
+    "n,expected",
+    [
+        (0, (0.005, 512)),  # nothing to sweep: the /24 defaults
+        (254, (0.005, 512)),  # /24
+        (256, (0.005, 512)),
+        (257, (0.010, 256)),  # anything past a /24 steps up
+        (510, (0.010, 256)),  # /23
+        (1022, (0.020, 128)),  # /22 (the sweep cap)
+        (4096, (0.080, 64)),  # floor on the connect fan-out
+    ],
+)
 def test_pacing_scales_with_subnet_size(n, expected):
     pause, conc = engine.pacing(n)
     assert (round(pause, 6), conc) == expected
@@ -541,13 +563,24 @@ def test_pacing_scales_with_subnet_size(n, expected):
 async def test_scan_paces_the_sweep_and_port_scan_by_subnet_size(monkeypatch):
     # A /22: 1022 host addresses, none of them ours -> all swept.
     targets = {str(h): "en0" for h in ipaddress.ip_network("10.0.0.0/22").hosts()}
-    calls = _install_scan_mocks(monkeypatch, targets=targets, alive_icmp={"10.0.0.1"},
-                                arp={"10.0.0.1": ("a0:bb:cc:dd:ee:f1", "en0")},
-                                gateway=None)
-    await engine.scan([_iface()], resolve=False, mdns=None, ssdp_enabled=False,
-                      scan_ports=True, http_id=False, timeout=0.1)
+    calls = _install_scan_mocks(
+        monkeypatch,
+        targets=targets,
+        alive_icmp={"10.0.0.1"},
+        arp={"10.0.0.1": ("a0:bb:cc:dd:ee:f1", "en0")},
+        gateway=None,
+    )
+    await engine.scan(
+        [_iface()],
+        resolve=False,
+        mdns=None,
+        ssdp_enabled=False,
+        scan_ports=True,
+        http_id=False,
+        timeout=0.1,
+    )
     assert calls["icmp"] == [(1022, {"pause": 0.02})]
-    assert set(calls["psem"]) == {128}        # one Semaphore(128) shared by every probe
+    assert set(calls["psem"]) == {128}  # one Semaphore(128) shared by every probe
 
 
 async def test_scan_reads_the_neighbour_table_off_the_event_loop(monkeypatch):
@@ -555,8 +588,14 @@ async def test_scan_reads_the_neighbour_table_off_the_event_loop(monkeypatch):
     # subprocess + polling). Run on the loop, that froze the TUI's keys and
     # spinner once per cycle; it must run in a worker thread.
     import threading
-    _install_scan_mocks(monkeypatch, targets={"192.168.0.1": "en0"},
-                        alive_icmp={"192.168.0.1"}, arp={}, gateway=None)
+
+    _install_scan_mocks(
+        monkeypatch,
+        targets={"192.168.0.1": "en0"},
+        alive_icmp={"192.168.0.1"},
+        arp={},
+        gateway=None,
+    )
     seen = []
 
     def fake_read_arp(targets):
@@ -564,8 +603,15 @@ async def test_scan_reads_the_neighbour_table_off_the_event_loop(monkeypatch):
         return {}
 
     monkeypatch.setattr(engine, "read_arp", fake_read_arp)
-    await engine.scan([_iface()], resolve=False, mdns=None, ssdp_enabled=False,
-                      scan_ports=False, http_id=False, timeout=0.1)
+    await engine.scan(
+        [_iface()],
+        resolve=False,
+        mdns=None,
+        ssdp_enabled=False,
+        scan_ports=False,
+        http_id=False,
+        timeout=0.1,
+    )
     assert seen == [False]
 
 
@@ -581,8 +627,7 @@ async def test_scan_full(monkeypatch):
         "192.168.0.3": ("a0:bb:cc:dd:ee:f3", "en0"),  # ICMP-silent, ARP only
     }
     ssdp_snap = {
-        "192.168.0.1": {"name": "My Router", "model": "Acme RT-1",
-                        "server": "Linux UPnP/1.0"},
+        "192.168.0.1": {"name": "My Router", "model": "Acme RT-1", "server": "Linux UPnP/1.0"},
         "192.168.0.2": {"name": None, "model": None, "server": "Roku UPnP/1.0"},
     }
     http_map = {
@@ -599,8 +644,13 @@ async def test_scan_full(monkeypatch):
     )
     progress = []
     devices = await engine.scan(
-        [_iface()], resolve=True, mdns=FakeMdns(), scan_ports=True, timeout=0.1,
-        progress=lambda d, t: progress.append((d, t)))
+        [_iface()],
+        resolve=True,
+        mdns=FakeMdns(),
+        scan_ports=True,
+        timeout=0.1,
+        progress=lambda d, t: progress.append((d, t)),
+    )
 
     by_ip = {d.ip: d for d in devices}
     assert [d.ip for d in devices] == ["192.168.0.1", "192.168.0.2", "192.168.0.3", "192.168.0.10"]
@@ -623,7 +673,7 @@ async def test_scan_full(monkeypatch):
     assert by_ip["192.168.0.2"].via == "arp"
     assert by_ip["192.168.0.2"].randomized_mac is True
     assert by_ip["192.168.0.2"].upnp_name is None
-    assert by_ip["192.168.0.2"].upnp_model == "Roku UPnP/1.0"   # SERVER fallback
+    assert by_ip["192.168.0.2"].upnp_model == "Roku UPnP/1.0"  # SERVER fallback
     assert by_ip["192.168.0.3"].via == "arp"
     assert by_ip["192.168.0.3"].http_server is None
     assert by_ip["192.168.0.3"].http_title == "Cam"
@@ -631,7 +681,7 @@ async def test_scan_full(monkeypatch):
     me = by_ip["192.168.0.10"]
     assert me.is_self is True
     assert me.via == "self"
-    assert me.mac == "A0:BB:CC:DD:EE:F0"      # filled from the interface, not ARP
+    assert me.mac == "A0:BB:CC:DD:EE:F0"  # filled from the interface, not ARP
     assert me.interface == "en0"
 
     assert (0, 3) in progress and (3, 3) in progress  # 3 swept (self excluded)
@@ -646,16 +696,23 @@ async def test_scan_flags_off_and_silent_host_dropped(monkeypatch):
         arp={},
         gateway=None,
     )
-    devices = await engine.scan([_iface()], resolve=False, mdns=None,
-                                ssdp_enabled=False, scan_ports=False, http_id=False,
-                                timeout=0.1, progress=None)
+    devices = await engine.scan(
+        [_iface()],
+        resolve=False,
+        mdns=None,
+        ssdp_enabled=False,
+        scan_ports=False,
+        http_id=False,
+        timeout=0.1,
+        progress=None,
+    )
     assert [d.ip for d in devices] == ["192.168.0.10"]
     me = devices[0]
-    assert me.hostname is None        # resolve off
-    assert me.services == []          # mdns off
-    assert me.open_ports == []        # ports off
-    assert me.upnp_name is None       # ssdp off
-    assert me.http_server is None     # http banner off
+    assert me.hostname is None  # resolve off
+    assert me.services == []  # mdns off
+    assert me.open_ports == []  # ports off
+    assert me.upnp_name is None  # ssdp off
+    assert me.http_server is None  # http banner off
 
 
 async def test_scan_cancel_stops_the_ping_sweep(monkeypatch):
@@ -671,12 +728,21 @@ async def test_scan_cancel_stops_the_ping_sweep(monkeypatch):
     _install_scan_mocks(
         monkeypatch,
         targets={f"192.168.0.{n}": "en0" for n in (1, 2, 3, 4, 5)},
-        alive_icmp=set(), arp={},
+        alive_icmp=set(),
+        arp={},
     )
-    monkeypatch.setattr(engine, "_ping", slow_ping)   # after the mocks, which set it too
-    task = asyncio.create_task(engine.scan(
-        [_iface()], resolve=False, mdns=None, ssdp_enabled=False,
-        scan_ports=False, http_id=False, timeout=0.1))
+    monkeypatch.setattr(engine, "_ping", slow_ping)  # after the mocks, which set it too
+    task = asyncio.create_task(
+        engine.scan(
+            [_iface()],
+            resolve=False,
+            mdns=None,
+            ssdp_enabled=False,
+            scan_ports=False,
+            http_id=False,
+            timeout=0.1,
+        )
+    )
     for _ in range(100):
         if len(started) == 5:
             break
@@ -703,8 +769,15 @@ async def test_scan_uses_icmp_socket_sweep_when_available(monkeypatch):
 
     monkeypatch.setattr(engine, "_ping", must_not_ping)
     progress = []
-    devices = await engine.scan([_iface()], resolve=False, mdns=None, ssdp_enabled=False,
-                                scan_ports=False, http_id=False, timeout=0.1,
-                                progress=lambda d, t: progress.append((d, t)))
+    devices = await engine.scan(
+        [_iface()],
+        resolve=False,
+        mdns=None,
+        ssdp_enabled=False,
+        scan_ports=False,
+        http_id=False,
+        timeout=0.1,
+        progress=lambda d, t: progress.append((d, t)),
+    )
     assert {d.ip: d.via for d in devices} == {"192.168.0.2": "icmp", "192.168.0.10": "self"}
     assert progress[0] == (0, 2) and progress[-1] == (2, 2)

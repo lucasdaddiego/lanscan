@@ -5,6 +5,7 @@ Lookup order: cached Wireshark `manuf` database (fetched on demand via
 Locally-administered addresses (randomised privacy MACs) are reported as such
 rather than guessed, since their OUI is meaningless.
 """
+
 import asyncio
 import os
 import re
@@ -58,13 +59,14 @@ def normalize_mac(raw: str | None) -> str | None:
     for sep in (":", "-"):
         if sep in raw:
             parts = raw.split(sep)
-            if len(parts) == 6 and all(1 <= len(p) <= 2 and all(c in _HEXSET for c in p)
-                                       for p in parts):
+            if len(parts) == 6 and all(
+                1 <= len(p) <= 2 and all(c in _HEXSET for c in p) for p in parts
+            ):
                 return ":".join(p.rjust(2, "0") for p in parts).upper()
             return None
     hexs = _NON_HEX.sub("", raw)  # bare 12-hex or dotted xxxx.xxxx.xxxx
     if len(hexs) == 12:
-        return ":".join(hexs[i:i + 2] for i in range(0, 12, 2)).upper()
+        return ":".join(hexs[i : i + 2] for i in range(0, 12, 2)).upper()
     return None
 
 
@@ -125,11 +127,11 @@ def lookup(mac: str | None) -> str | None:
         return None  # caller flags this as a private/randomised MAC
     hexs = _NON_HEX.sub("", mac).upper()
     o24, o28, o36 = _tables()
-    if (v := o36.get(hexs[:9])):
+    if v := o36.get(hexs[:9]):
         return v
-    if (v := o28.get(hexs[:7])):
+    if v := o28.get(hexs[:7]):
         return v
-    if (v := o24.get(hexs[:6])):
+    if v := o24.get(hexs[:6]):
         return v
     return _BUILTIN.get(mac[:8].upper())
 
@@ -149,6 +151,9 @@ def update_manuf() -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
     finally:
         _tables.cache_clear()
-    n = sum(1 for line in _MANUF_PATH.read_text(errors="replace").splitlines()
-            if line and not line.startswith("#"))
+    n = sum(
+        1
+        for line in _MANUF_PATH.read_text(errors="replace").splitlines()
+        if line and not line.startswith("#")
+    )
     return True, f"{n:,} vendor prefixes cached at {_MANUF_PATH}"

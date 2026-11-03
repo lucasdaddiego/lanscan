@@ -5,6 +5,7 @@ optional mDNS warm-up, `engine.scan`, the history merge) exactly once, prints
 the device list and exits. Exit codes follow the sibling scanners: 0 ok,
 1 runtime error, 3 no interface to scan (a usage error is argparse's 2).
 """
+
 import argparse
 import asyncio
 import json
@@ -34,6 +35,7 @@ async def _gather(args: argparse.Namespace) -> tuple[list[Interface], list[Devic
     mdns: MdnsDiscovery | None = None
     if not args.no_mdns:
         from .discovery import MdnsDiscovery
+
         try:
             mdns = MdnsDiscovery()
             await mdns.start()
@@ -44,9 +46,14 @@ async def _gather(args: argparse.Namespace) -> tuple[list[Interface], list[Devic
         if mdns is not None:
             await asyncio.sleep(MDNS_WARMUP)
         devices = await scan(
-            ifaces, resolve=not args.no_resolve, mdns=mdns,
-            ssdp_enabled=not args.no_ssdp, scan_ports=not args.no_ports,
-            http_id=not args.no_http, timeout=args.timeout)
+            ifaces,
+            resolve=not args.no_resolve,
+            mdns=mdns,
+            ssdp_enabled=not args.no_ssdp,
+            scan_ports=not args.no_ports,
+            http_id=not args.no_http,
+            timeout=args.timeout,
+        )
     finally:
         if mdns is not None:
             await mdns.stop()
@@ -74,16 +81,21 @@ def _cell(text: str, width: int) -> str:
 
 
 def _print_table(devices: list[Device], out: TextIO) -> None:
-    print(f"{_cell('IP', 16)} {_cell('MAC', 18)} {_cell('VENDOR', 20)} "
-          f"{_cell('NAME', 30)} PORTS", file=out)
+    print(
+        f"{_cell('IP', 16)} {_cell('MAC', 18)} {_cell('VENDOR', 20)} {_cell('NAME', 30)} PORTS",
+        file=out,
+    )
     for d in devices:
         vendor = d.vendor or ("private MAC" if d.randomized_mac else "?")
         name = d.name
         if d.tags:
             name = f"{name} ({', '.join(d.tags)})" if name else f"({', '.join(d.tags)})"
         ports = ",".join(map(str, d.open_ports))
-        print(f"{_cell(d.ip, 16)} {_cell(d.mac or '', 18)} {_cell(vendor, 20)} "
-              f"{_cell(name, 30)} {ports}".rstrip(), file=out)
+        print(
+            f"{_cell(d.ip, 16)} {_cell(d.mac or '', 18)} {_cell(vendor, 20)} "
+            f"{_cell(name, 30)} {ports}".rstrip(),
+            file=out,
+        )
 
 
 def document(ifaces: list[Interface], devices: list[Device]) -> dict[str, object]:
@@ -102,8 +114,7 @@ def _print_json(ifaces: list[Interface], devices: list[Device], out: TextIO) -> 
     out.write("\n")
 
 
-def run_once(args: argparse.Namespace, out: TextIO = sys.stdout,
-             err: TextIO = sys.stderr) -> int:
+def run_once(args: argparse.Namespace, out: TextIO = sys.stdout, err: TextIO = sys.stderr) -> int:
     """Scan once and print the devices; returns the process exit code."""
     try:
         ifaces, devices = asyncio.run(_gather(args))

@@ -2,6 +2,7 @@
 
 `asyncio.open_connection` is mocked throughout, so no real sockets are opened.
 """
+
 import asyncio
 import errno
 
@@ -32,7 +33,7 @@ def test_port_tables_are_consistent():
     assert set(ports.PORT_NAMES.values()) <= set(ports.PORT_CATEGORY)
     web = (*ports.HTTP_PORTS, *ports.HTTPS_PORTS)
     assert set(web) <= set(ports.PORT_NAMES)
-    assert len(set(web)) == len(web)                       # no duplicates
+    assert len(set(web)) == len(web)  # no duplicates
     assert set(ports.PORT_NAMES) <= set(ports.COMMON_PORTS)  # names only for scanned ports
 
 
@@ -71,15 +72,15 @@ async def test_open_ports_returns_sorted_open(monkeypatch):
 def test_raise_fd_limit_bumps_soft(monkeypatch):
     calls = {}
     monkeypatch.setattr(ports.resource, "getrlimit", lambda res: (1024, 8192))
-    monkeypatch.setattr(ports.resource, "setrlimit",
-                        lambda res, lim: calls.setdefault("lim", lim))
+    monkeypatch.setattr(ports.resource, "setrlimit", lambda res, lim: calls.setdefault("lim", lim))
     assert ports.raise_fd_limit(4096) == 4096
     assert calls["lim"] == (4096, 8192)
 
 
 def test_raise_fd_limit_infinite_hard(monkeypatch):
-    monkeypatch.setattr(ports.resource, "getrlimit",
-                        lambda res: (1024, ports.resource.RLIM_INFINITY))
+    monkeypatch.setattr(
+        ports.resource, "getrlimit", lambda res: (1024, ports.resource.RLIM_INFINITY)
+    )
     monkeypatch.setattr(ports.resource, "setrlimit", lambda res, lim: None)
     assert ports.raise_fd_limit(4096) == 4096
 
@@ -174,11 +175,12 @@ async def test_full_scan_with_progress(monkeypatch):
 
     monkeypatch.setattr(ports, "_check_one", fake_check)
     seen = []
-    found = await ports.full_scan("1.2.3.4", timeout=0.01, concurrency=64,
-                                  progress=lambda d, t: seen.append((d, t)))
+    found = await ports.full_scan(
+        "1.2.3.4", timeout=0.01, concurrency=64, progress=lambda d, t: seen.append((d, t))
+    )
     assert found == [22, 80, 443]
     assert seen[-1] == (65535, 65535)  # final progress pulse
-    assert len(seen) > 1               # periodic pulses fired too
+    assert len(seen) > 1  # periodic pulses fired too
 
 
 async def test_full_scan_without_progress(monkeypatch):

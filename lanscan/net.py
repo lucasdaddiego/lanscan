@@ -9,6 +9,7 @@ macOS reads `networksetup`/`ifconfig`/`route`; Linux reads `ip` and
 `/proc/net/wireless`. The orchestrator (`discover_interfaces`) is shared — only
 the three data sources (ports, interface facts, gateway) dispatch per platform.
 """
+
 import contextlib
 import ipaddress
 import re
@@ -47,9 +48,11 @@ def _hardware_ports_macos() -> dict[str, tuple[str, str]]:
     try:
         out = subprocess.run(
             ["networksetup", "-listallhardwareports"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return {}
     ports: dict[str, tuple[str, str]] = {}
     port = None
@@ -115,9 +118,11 @@ def _ip_link_rows() -> list[tuple[str, str | None, str | None, bool]]:
     try:
         out = subprocess.run(
             ["ip", "-o", "link", "show"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return []
     return _parse_ip_link(out)
 
@@ -147,9 +152,11 @@ def _default_gateway_macos() -> str | None:
     try:
         out = subprocess.run(
             ["route", "-n", "get", "default"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     m = re.search(r"gateway:\s*([0-9.]+)", out)
     return m.group(1) if m else None
@@ -159,9 +166,11 @@ def _default_gateway_linux() -> str | None:
     try:
         out = subprocess.run(
             ["ip", "route", "show", "default"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     m = re.search(r"default via\s+([0-9.]+)", out)
     return m.group(1) if m else None
@@ -171,9 +180,9 @@ def _default_gateway_linux() -> str | None:
 # tunnels, AWDL (OrbStack/Docker/VMware live behind these). Linux: docker/veth/
 # libvirt/VM/VPN/CNI interfaces, including the dash-named bridges (br-…, cni-…).
 _VIRTUAL_RE = re.compile(
-    r"^(?:bridge|vmenet|vmnet|feth|utun|awdl|llw|gif|stf|anpi|ap)\d"      # macOS
-    r"|^(?:docker|veth|virbr|vnet|tap|tun|wg|tailscale|zt|nordlynx)"      # Linux
-    r"|^(?:br|cni|cali|flannel|kube)-"                                    # Linux dash
+    r"^(?:bridge|vmenet|vmnet|feth|utun|awdl|llw|gif|stf|anpi|ap)\d"  # macOS
+    r"|^(?:docker|veth|virbr|vnet|tap|tun|wg|tailscale|zt|nordlynx)"  # Linux
+    r"|^(?:br|cni|cali|flannel|kube)-"  # Linux dash
 )
 
 
@@ -198,7 +207,7 @@ def _ifconfig_facts_macos() -> tuple[set[str], set[str], dict[str, str]]:
     """
     try:
         out = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return set(), set(), {}
     members: set[str] = set()
     virtual_subnets: set[str] = set()
@@ -219,9 +228,8 @@ def _ifconfig_facts_macos() -> tuple[set[str], set[str], dict[str, str]]:
             parts = s.split()
             try:
                 prefix = bin(int(parts[3], 16)).count("1")  # netmask 0xfffffe00 -> /23
-                virtual_subnets.add(str(ipaddress.ip_network(
-                    f"{parts[1]}/{prefix}", strict=False)))
-            except (ValueError, IndexError):
+                virtual_subnets.add(str(ipaddress.ip_network(f"{parts[1]}/{prefix}", strict=False)))
+            except ValueError, IndexError:
                 pass
     return members, virtual_subnets, macs
 
@@ -245,9 +253,11 @@ def _ifconfig_facts_linux() -> tuple[set[str], set[str], dict[str, str]]:
     try:
         out = subprocess.run(
             ["ip", "-o", "-4", "addr", "show"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return members, virtual_subnets, macs
     for line in out.splitlines():
         parts = line.split()
@@ -259,8 +269,9 @@ def _ifconfig_facts_linux() -> tuple[set[str], set[str], dict[str, str]]:
     return members, virtual_subnets, macs
 
 
-def discover_interfaces(only_device: str | None = None,
-                        only_kind: str | None = None) -> list[Interface]:
+def discover_interfaces(
+    only_device: str | None = None, only_kind: str | None = None
+) -> list[Interface]:
     """Active Wi-Fi/Ethernet interfaces with an IPv4 address.
 
     only_device: restrict to a single BSD device name (e.g. "en0").
@@ -294,10 +305,17 @@ def discover_interfaces(only_device: str | None = None,
                 continue
             if str(net) in virtual_subnets:
                 continue  # OrbStack/VM bridge-owned subnet — never sweep it
-            found.append(Interface(
-                device=device, port=port, kind=kind, ipv4=addr,
-                prefix=ip.network_prefix, cidr=str(net), mac=macs.get(device),
-            ))
+            found.append(
+                Interface(
+                    device=device,
+                    port=port,
+                    kind=kind,
+                    ipv4=addr,
+                    prefix=ip.network_prefix,
+                    cidr=str(net),
+                    mac=macs.get(device),
+                )
+            )
     found.sort(key=lambda i: (i.kind != "wifi", i.device))  # Wi-Fi first
     return found
 

@@ -4,6 +4,7 @@ Two layers: pure renderable helpers (exercised on an unmounted app instance) and
 behaviour driven through Textual's ``run_test()`` pilot with the scan engine and
 mDNS mocked out.
 """
+
 import asyncio
 import json
 import time
@@ -37,22 +38,28 @@ def test_badge_text():
     assert tui._badge("HI", "#ffffff").plain == " HI "
 
 
-@pytest.mark.parametrize("name,expected", [
-    ("http", tui.C["blue"]),       # web
-    ("ssh", tui.C["green"]),       # shell
-    ("zzz", tui.C["faint"]),       # unknown service name
-    (None, tui.C["faint"]),        # no name
-])
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("http", tui.C["blue"]),  # web
+        ("ssh", tui.C["green"]),  # shell
+        ("zzz", tui.C["faint"]),  # unknown service name
+        (None, tui.C["faint"]),  # no name
+    ],
+)
 def test_port_color(name, expected):
     assert tui._port_color(name) == expected
 
 
-@pytest.mark.parametrize("label,expected", [
-    ("AirPlay", tui._CAT_COLOR["media"]),
-    ("Printer", tui._CAT_COLOR["file"]),
-    ("SSH", tui._CAT_COLOR["shell"]),
-    ("Something Else", tui.C["purple"]),   # keyword fallback
-])
+@pytest.mark.parametrize(
+    "label,expected",
+    [
+        ("AirPlay", tui._CAT_COLOR["media"]),
+        ("Printer", tui._CAT_COLOR["file"]),
+        ("SSH", tui._CAT_COLOR["shell"]),
+        ("Something Else", tui.C["purple"]),  # keyword fallback
+    ],
+)
 def test_svc_color(label, expected):
     assert tui._svc_color(label) == expected
 
@@ -121,42 +128,56 @@ def test_detail_ignores_unknown_tag():
 def test_detail_full_gateway_device():
     app = bare_app()
     dev = Device(
-        ip="192.168.0.1", interface="en0", mac="A0:BB:CC:DD:EE:01", vendor="Acme",
-        hostname="router.local.", mdns_name="My Router", services=["AirPlay", "SSH"],
-        open_ports=[22, 80, 9999], is_gateway=True, via="icmp",
-        first_seen=time.time() - 5, last_seen=time.time() - 5,
+        ip="192.168.0.1",
+        interface="en0",
+        mac="A0:BB:CC:DD:EE:01",
+        vendor="Acme",
+        hostname="router.local.",
+        mdns_name="My Router",
+        services=["AirPlay", "SSH"],
+        open_ports=[22, 80, 9999],
+        is_gateway=True,
+        via="icmp",
+        first_seen=time.time() - 5,
+        last_seen=time.time() - 5,
     )
     app._devices = [dev]
     app._new = {dev.ip}
     out = render(app._detail_renderable(dev))
-    assert "ROUTER" in out                 # tag badge + Role
-    assert "My Router" in out              # mDNS name
-    assert "router.local" in out           # hostname
-    assert "Acme" in out                   # vendor
+    assert "ROUTER" in out  # tag badge + Role
+    assert "My Router" in out  # mDNS name
+    assert "router.local" in out  # hostname
+    assert "Acme" in out  # vendor
     assert "ssh" in out and "http" in out  # known port names
-    assert "?" in out                      # unknown port 9999
-    assert "3 open" in out                 # ports suffix
-    assert "AirPlay" in out                # services chip
-    assert "ago" in out                    # recent activity
-    assert "yes" in out                    # New: yes
+    assert "?" in out  # unknown port 9999
+    assert "3 open" in out  # ports suffix
+    assert "AirPlay" in out  # services chip
+    assert "ago" in out  # recent activity
+    assert "yes" in out  # New: yes
 
 
 def test_detail_self_randomized_full_scanned():
     app = bare_app()
     dev = Device(
-        ip="192.168.0.10", interface="", mac="12:BB:CC:DD:EE:10", randomized_mac=True,
-        is_self=True, via="weird", first_seen=time.time() - 120, last_seen=time.time() - 120,
+        ip="192.168.0.10",
+        interface="",
+        mac="12:BB:CC:DD:EE:10",
+        randomized_mac=True,
+        is_self=True,
+        via="weird",
+        first_seen=time.time() - 120,
+        last_seen=time.time() - 120,
     )
     app._devices = [dev]
-    app._full_ports = {dev.ip: []}   # full-scan done, nothing open
+    app._full_ports = {dev.ip: []}  # full-scan done, nothing open
     out = render(app._detail_renderable(dev))
     assert "THIS MAC" in out
-    assert "private MAC" in out      # no vendor + randomized
-    assert "randomized" in out       # MAC badge
-    assert "this Mac" in out         # Role
+    assert "private MAC" in out  # no vendor + randomized
+    assert "randomized" in out  # MAC badge
+    assert "this Mac" in out  # Role
     assert "0 open" in out and "full" in out
     assert "no open ports" in out
-    assert "ago" in out              # 2m ago branch
+    assert "ago" in out  # 2m ago branch
 
 
 def test_detail_plain_unknown_device():
@@ -164,8 +185,8 @@ def test_detail_plain_unknown_device():
     dev = Device(ip="192.168.0.20", interface="en0", mac=None, via="", last_seen=0)
     app._devices = [dev]
     out = render(app._detail_renderable(dev))
-    assert "unknown" in out          # no vendor, not randomized
-    assert tui.DASH in out           # MAC dash + via dash
+    assert "unknown" in out  # no vendor, not randomized
+    assert tui.DASH in out  # MAC dash + via dash
 
 
 def test_detail_scanning_no_ports_yet():
@@ -190,9 +211,14 @@ def test_detail_scanning_with_ports():
 def test_detail_identity_and_history_rows():
     app = bare_app()
     dev = Device(
-        ip="192.168.0.7", upnp_name="Living Room TV", upnp_model="Acme X9",
-        http_server="lighttpd", http_title="Camera Login",
-        ever_seen=True, first_seen=time.time() - 3 * 86400, last_seen=time.time() - 5,
+        ip="192.168.0.7",
+        upnp_name="Living Room TV",
+        upnp_model="Acme X9",
+        http_server="lighttpd",
+        http_title="Camera Login",
+        ever_seen=True,
+        first_seen=time.time() - 3 * 86400,
+        last_seen=time.time() - 5,
     )
     app._devices = [dev]
     out = render(app._detail_renderable(dev))
@@ -200,7 +226,7 @@ def test_detail_identity_and_history_rows():
     assert "Web" in out and "Camera Login" in out
     assert "Model" in out and "Acme X9" in out
     assert "Server" in out and "lighttpd" in out
-    assert "returning device" in out                      # ever_seen
+    assert "returning device" in out  # ever_seen
     # first_seen 3 days ago -> rendered as a date, not just a clock time
     assert time.strftime("%b %d", time.localtime(dev.first_seen)) in out
 
@@ -211,7 +237,7 @@ def test_detail_marks_a_remembered_name():
     app._devices = [dev]
     out = render(app._detail_renderable(dev))
     assert "Kettle  (last known)" in out
-    dev.mdns_name = "Kettle"                               # live name again -> plain
+    dev.mdns_name = "Kettle"  # live name again -> plain
     assert "(last known)" not in render(app._detail_renderable(dev))
 
 
@@ -223,21 +249,21 @@ async def test_no_history_still_tracks_the_session(monkeypatch):
     app = make_app(monkeypatch, devices=[dev], no_history=True)
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._history == {}                          # nothing loaded from disk
+        assert app._history == {}  # nothing loaded from disk
         await run_scan(app, pilot)
         first = dev.first_seen
         assert dev.ever_seen is False
         await run_scan(app, pilot)
-        assert dev.first_seen == first                     # stable across refreshes
-        assert dev.ever_seen is True                       # seen earlier this session
-    assert saves == []                                     # never written to disk
+        assert dev.first_seen == first  # stable across refreshes
+        assert dev.ever_seen is True  # seen earlier this session
+    assert saves == []  # never written to disk
 
 
 def test_detail_scanning_zero_total():
     app = bare_app()
     dev = Device(ip="192.168.0.32", open_ports=[])
     app._devices = [dev]
-    app._fullscan = ("192.168.0.32", 0, 0)   # ftotal 0 -> pct 0 branch
+    app._fullscan = ("192.168.0.32", 0, 0)  # ftotal 0 -> pct 0 branch
     assert "scanning 0%" in render(app._detail_renderable(dev))
 
 
@@ -249,7 +275,7 @@ def test_detail_signature_placeholder_and_device():
     app._fullscan = ("10.0.0.1", 1, 2)
     sig = app._detail_signature(dev)
     assert sig[0] == "10.0.0.1"
-    assert sig[-1] == ("10.0.0.1", 1, 2)   # fullscan tuple captured when it matches
+    assert sig[-1] == ("10.0.0.1", 1, 2)  # fullscan tuple captured when it matches
     app._fullscan = ("10.0.0.9", 1, 2)
     assert app._detail_signature(dev)[-1] is None  # non-matching fullscan -> None
 
@@ -307,7 +333,7 @@ async def test_new_device_marked_on_second_scan(monkeypatch):
     app = make_app(monkeypatch, devices=devices)
     async with app.run_test() as pilot:
         await run_scan(app, pilot)
-        assert app._new == set()            # first scan never flags "new"
+        assert app._new == set()  # first scan never flags "new"
         devices.append(Device(ip="192.168.0.2"))
         await run_scan(app, pilot)
         assert "192.168.0.2" in app._new
@@ -403,25 +429,25 @@ async def test_spinner_timer_pauses_when_idle_and_wakes_on_activity(monkeypatch)
     app = make_app(monkeypatch)
     async with app.run_test() as pilot:
         await run_scan(app, pilot)
-        app._tick_spin()                                   # idle after a scan
-        assert not app._spin_timer._active.is_set()        # -> timer paused
+        app._tick_spin()  # idle after a scan
+        assert not app._spin_timer._active.is_set()  # -> timer paused
         app._paused = True
-        app._trigger_scan()                                # even a refused trigger...
-        assert app._spin_timer._active.is_set()            # ...wakes it
+        app._trigger_scan()  # even a refused trigger...
+        assert app._spin_timer._active.is_set()  # ...wakes it
         app._tick_spin()
         assert not app._spin_timer._active.is_set()
         app._paused = False
         app._fullscan = ("192.168.0.1", 0, 1)
         app._wake_spinner()
         assert app._spin_timer._active.is_set()
-        app._tick_spin()                                   # active -> stays awake
+        app._tick_spin()  # active -> stays awake
         assert app._spin_timer._active.is_set()
 
 
 def test_spinner_helpers_tolerate_unmounted_app():
-    app = bare_app()                                       # no timer yet
+    app = bare_app()  # no timer yet
     app._scanned_once = True
-    app._tick_spin()                                       # idle + no timer -> no-op
+    app._tick_spin()  # idle + no timer -> no-op
     app._wake_spinner()
 
 
@@ -429,9 +455,9 @@ async def test_on_progress(monkeypatch):
     app = make_app(monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._on_progress(5, 100)     # not a multiple of 24 -> stored, no forced repaint
+        app._on_progress(5, 100)  # not a multiple of 24 -> stored, no forced repaint
         assert app._progress == (5, 100)
-        app._on_progress(24, 100)    # multiple of 24 -> updates status
+        app._on_progress(24, 100)  # multiple of 24 -> updates status
         assert app._progress == (24, 100)
 
 
@@ -496,21 +522,21 @@ async def test_export_failure(monkeypatch, tmp_path):
         await pilot.pause()
         assert list(tmp_path.glob("lanscan-*.json")) == []
         (note,) = [(a, k) for a, k in notes if "disk full" in str(a)]
-        assert note[1]["markup"] is False       # "[Errno …]" must not parse as markup
+        assert note[1]["markup"] is False  # "[Errno …]" must not parse as markup
 
 
 async def test_toggle_ports(monkeypatch):
     app = make_app(monkeypatch, devices=[Device(ip="192.168.0.1", open_ports=[80])])
     async with app.run_test() as pilot:
         await run_scan(app, pilot)
-        assert app._ports is False             # --no-ports default in make_args
-        app.action_toggle_ports()              # -> on, triggers a rescan
+        assert app._ports is False  # --no-ports default in make_args
+        app.action_toggle_ports()  # -> on, triggers a rescan
         assert app._ports is True
         for _ in range(100):
             await pilot.pause()
             if not app._scanning:
                 break
-        app.action_toggle_ports()              # -> off, clears open ports inline
+        app.action_toggle_ports()  # -> off, clears open ports inline
         assert app._ports is False
         assert app._devices[0].open_ports == []
 
@@ -521,8 +547,8 @@ async def test_toggle_ports_off_keeps_full_scan(monkeypatch):
     async with app.run_test() as pilot:
         await run_scan(app, pilot)
         app._ports = True
-        app._full_ports = {"192.168.0.1": [443]}   # a prior full-scan result
-        app.action_toggle_ports()                  # off
+        app._full_ports = {"192.168.0.1": [443]}  # a prior full-scan result
+        app.action_toggle_ports()  # off
         assert app._devices[0].open_ports == [80, 443]  # untouched (full-scan kept)
 
 
@@ -545,16 +571,16 @@ async def test_pause_stops_only_auto_refresh(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         app.action_toggle_pause()
-        await run_scan(app, pilot)                 # `r` while paused
+        await run_scan(app, pilot)  # `r` while paused
         assert app._scanned_once is True
         assert [d.ip for d in app._devices] == ["192.168.0.1"]
-        app.action_toggle_ports()                  # `o` (on) while paused
+        app.action_toggle_ports()  # `o` (on) while paused
         assert app._scanning is True
         for _ in range(100):
             await pilot.pause()
             if not app._scanning:
                 break
-        app.action_cycle_kind()                    # `a` while paused
+        app.action_cycle_kind()  # `a` while paused
         assert app._scanning is True
         for _ in range(100):
             await pilot.pause()
@@ -592,8 +618,8 @@ async def test_cycle_kind_while_scanning_rescans_the_new_scope(monkeypatch):
     async def fake_scan(interfaces, **kw):
         if not gate.is_set():
             await gate.wait()
-            return [Device(ip="10.0.0.7", interface="en1")]    # ethernet host
-        return [Device(ip="192.168.0.9", interface="en0")]     # wi-fi host
+            return [Device(ip="10.0.0.7", interface="en1")]  # ethernet host
+        return [Device(ip="192.168.0.9", interface="en0")]  # wi-fi host
 
     monkeypatch.setattr(tui, "scan", fake_scan)
     monkeypatch.setattr(tui.net, "discover_interfaces", fake_discover)
@@ -606,14 +632,14 @@ async def test_cycle_kind_while_scanning_rescans_the_new_scope(monkeypatch):
         app.action_rescan()
         await pilot.pause()
         assert app._scanning is True
-        app.action_cycle_kind()          # -> "wifi" while the all-scope scan runs
+        app.action_cycle_kind()  # -> "wifi" while the all-scope scan runs
         gate.set()
         for _ in range(200):
             await pilot.pause()
             if not app._scanning and len(kinds) > 1:
                 break
-        assert kinds == [None, "wifi"]                            # rescanned, new scope
-        assert [d.ip for d in app._devices] == ["192.168.0.9"]    # old-scope rows dropped
+        assert kinds == [None, "wifi"]  # rescanned, new scope
+        assert [d.ip for d in app._devices] == ["192.168.0.9"]  # old-scope rows dropped
 
 
 async def test_cycle_kind_then_cancel_does_not_start_a_new_scan(monkeypatch):
@@ -629,7 +655,7 @@ async def test_cycle_kind_then_cancel_does_not_start_a_new_scan(monkeypatch):
         return []
 
     async def fake_scan(interfaces, **kw):
-        await gate.wait()          # never released: this run only ever gets cancelled
+        await gate.wait()  # never released: this run only ever gets cancelled
         return []
 
     monkeypatch.setattr(tui, "scan", fake_scan)
@@ -641,13 +667,13 @@ async def test_cycle_kind_then_cancel_does_not_start_a_new_scan(monkeypatch):
         app.action_rescan()
         await pilot.pause()
         assert app._scanning is True
-        app.action_cycle_kind()        # -> "wifi" while the all-scope scan runs
-        app.workers.cancel_all()       # what quitting does
+        app.action_cycle_kind()  # -> "wifi" while the all-scope scan runs
+        app.workers.cancel_all()  # what quitting does
         for _ in range(200):
             await pilot.pause()
             if not app._scanning:
                 break
-        assert kinds == [None]         # no second scan was started
+        assert kinds == [None]  # no second scan was started
         assert app._scanning is False
 
 
@@ -664,8 +690,8 @@ async def test_rescan_blocked_while_scanning(monkeypatch):
     app = make_app(monkeypatch)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._scanning = True            # pretend a scan is in flight
-        app._trigger_scan()             # guarded -> does not start another
+        app._scanning = True  # pretend a scan is in flight
+        app._trigger_scan()  # guarded -> does not start another
         # nothing to assert beyond "no crash"; the guard branch is exercised
 
 
@@ -674,13 +700,12 @@ async def test_scan_reports_failure(monkeypatch):
     app = make_app(monkeypatch)
 
     async def boom(interfaces, **kw):
-        raise OSError(24, "Too many open files")   # str() -> "[Errno 24] ..."
+        raise OSError(24, "Too many open files")  # str() -> "[Errno 24] ..."
 
     monkeypatch.setattr(tui, "scan", boom)
     notes = []
     async with app.run_test() as pilot:
-        monkeypatch.setattr(app, "notify",
-                            lambda *a, **k: notes.append((a, k)))
+        monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
         await run_scan(app, pilot)
         # The "[Errno 24]" text must reach the toast verbatim, not as Rich markup.
         (note,) = [(a, k) for a, k in notes if "Too many open files" in str(a)]
@@ -722,8 +747,7 @@ class _RowEvent:
 
 
 async def test_row_highlighted(monkeypatch):
-    app = make_app(monkeypatch, devices=[
-        Device(ip="192.168.0.1"), Device(ip="192.168.0.2")])
+    app = make_app(monkeypatch, devices=[Device(ip="192.168.0.1"), Device(ip="192.168.0.2")])
     async with app.run_test() as pilot:
         await run_scan(app, pilot)
         app.on_data_table_row_highlighted(_RowEvent("192.168.0.2"))
@@ -756,7 +780,7 @@ async def test_connect_no_selection(monkeypatch):
         await pilot.pause()
         app._devices = []
         app._selected_ip = None
-        app.action_connect()       # no device -> early return
+        app.action_connect()  # no device -> early return
         await pilot.pause()
 
 
@@ -775,8 +799,9 @@ async def test_connect_picks_port_and_launches(monkeypatch):
     dev = Device(ip="192.168.0.1", open_ports=[22, 9999])  # 9999 has no name
     app = make_app(monkeypatch, devices=[dev])
     calls = []
-    monkeypatch.setattr(tui.launch, "launch",
-                        lambda ip, port, svc: calls.append((ip, port, svc)) or (True, "ok"))
+    monkeypatch.setattr(
+        tui.launch, "launch", lambda ip, port, svc: calls.append((ip, port, svc)) or (True, "ok")
+    )
     async with app.run_test() as pilot:
         await run_scan(app, pilot)
         app.action_connect()
@@ -807,24 +832,27 @@ async def test_connect_launch_failure_notifies(monkeypatch):
         app.action_connect()
         await pilot.pause()
         app.screen.on_option_list_option_selected(
-            type("S", (), {"option": type("O", (), {"id": "80"})()})())
+            type("S", (), {"option": type("O", (), {"id": "80"})()})()
+        )
         await pilot.pause()
         (note,) = [(a, k) for a, k in notes if a and a[0] == err]
-        assert note[1] == {"title": "Connect 192.168.0.1:80", "severity": "error",
-                           "markup": False}     # the OSError text is not markup
+        assert note[1] == {
+            "title": "Connect 192.168.0.1:80",
+            "severity": "error",
+            "markup": False,
+        }  # the OSError text is not markup
 
 
 async def test_port_picker_cancel(monkeypatch):
     dev = Device(ip="192.168.0.1", open_ports=[80])
     app = make_app(monkeypatch, devices=[dev])
     launched = []
-    monkeypatch.setattr(tui.launch, "launch",
-                        lambda *a: launched.append(a) or (True, "ok"))
+    monkeypatch.setattr(tui.launch, "launch", lambda *a: launched.append(a) or (True, "ok"))
     async with app.run_test() as pilot:
         await run_scan(app, pilot)
         app.action_connect()
         await pilot.pause()
-        app.screen.action_cancel()   # dismiss(None) -> _launch_port returns early
+        app.screen.action_cancel()  # dismiss(None) -> _launch_port returns early
         await pilot.pause()
         assert launched == []
 
@@ -860,9 +888,9 @@ async def test_full_scan_progress_when_selection_moved(monkeypatch):
     app = make_app(monkeypatch, devices=[dev])
 
     async def fake_full(ip, *, progress=None, **kw):
-        app._selected_ip = "192.168.0.99"   # selection moved away from the target
+        app._selected_ip = "192.168.0.99"  # selection moved away from the target
         if progress:
-            progress(100, 200)              # prog sees selected != ip -> no detail repaint
+            progress(100, 200)  # prog sees selected != ip -> no detail repaint
         return [80]
 
     monkeypatch.setattr(tui.ports, "full_scan", fake_full)
@@ -890,13 +918,13 @@ async def test_apply_merges_kept_full_scan_results(monkeypatch):
 
 async def test_full_scan_success(monkeypatch):
     dev = Device(ip="192.168.0.1", open_ports=[22])
-    other = Device(ip="192.168.0.2")   # a non-target row the merge loop must skip
+    other = Device(ip="192.168.0.2")  # a non-target row the merge loop must skip
     app = make_app(monkeypatch, devices=[dev, other])
 
     async def fake_full(ip, *, progress=None, **kw):
         if progress:
-            progress(100, 200)        # exercises the live-progress callback (selected == ip)
-        return list(range(1, 20))     # 19 ports -> notify truncates with "…"
+            progress(100, 200)  # exercises the live-progress callback (selected == ip)
+        return list(range(1, 20))  # 19 ports -> notify truncates with "…"
 
     monkeypatch.setattr(tui.ports, "full_scan", fake_full)
     async with app.run_test() as pilot:
@@ -908,8 +936,8 @@ async def test_full_scan_success(monkeypatch):
             if app._fullscan is None and "192.168.0.1" in app._full_ports:
                 break
         assert app._full_ports["192.168.0.1"] == list(range(1, 20))
-        assert 22 in app._devices[0].open_ports   # merged with the curated result
-        assert app._devices[1].open_ports == []   # other device left untouched
+        assert 22 in app._devices[0].open_ports  # merged with the curated result
+        assert app._devices[1].open_ports == []  # other device left untouched
 
 
 async def test_full_scan_empty_result(monkeypatch):
@@ -968,7 +996,7 @@ async def test_full_scan_cancel(monkeypatch):
         app.action_full_scan()
         await pilot.pause()
         assert app._fullscan is not None
-        app.action_full_scan()       # second press cancels
+        app.action_full_scan()  # second press cancels
         for _ in range(200):
             await pilot.pause()
             if app._fullscan is None:
@@ -1021,7 +1049,7 @@ async def test_mdns_start_failure_degrades(monkeypatch):
     app = LanScanApp(make_args(no_mdns=False))
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._mdns is None     # failure -> mDNS quietly disabled
+        assert app._mdns is None  # failure -> mDNS quietly disabled
 
 
 # ---- device history lifecycle --------------------------------------------
@@ -1034,12 +1062,12 @@ async def test_history_lifecycle(monkeypatch):
     app = make_app(monkeypatch, devices=[dev], no_history=False)
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._history == loaded            # loaded on mount
+        assert app._history == loaded  # loaded on mount
         await run_scan(app, pilot)
-        assert dev.first_seen == 1.0             # returning device inherits stored first_seen
+        assert dev.first_seen == 1.0  # returning device inherits stored first_seen
         assert dev.ever_seen is True
-        assert saves                             # persisted during _apply
-    assert len(saves) >= 2                       # also saved on unmount
+        assert saves  # persisted during _apply
+    assert len(saves) >= 2  # also saved on unmount
 
 
 async def test_history_pruned_to_cap_on_apply(monkeypatch):
@@ -1050,13 +1078,12 @@ async def test_history_pruned_to_cap_on_apply(monkeypatch):
     saves = []
     monkeypatch.setattr(tui.history, "load", lambda: dict(loaded))
     monkeypatch.setattr(tui.history, "save", lambda recs: saves.append(dict(recs)))
-    app = make_app(monkeypatch, devices=[Device(ip="192.168.0.5", mac="NEW")],
-                   no_history=False)
+    app = make_app(monkeypatch, devices=[Device(ip="192.168.0.5", mac="NEW")], no_history=False)
     async with app.run_test() as pilot:
         await pilot.pause()
         await run_scan(app, pilot)
-        assert set(app._history) == {"MID", "NEW"}   # oldest record dropped
-        assert set(saves[-1]) == {"MID", "NEW"}      # and that's what got written
+        assert set(app._history) == {"MID", "NEW"}  # oldest record dropped
+        assert set(saves[-1]) == {"MID", "NEW"}  # and that's what got written
 
 
 async def _empty_scan(interfaces, **kw):

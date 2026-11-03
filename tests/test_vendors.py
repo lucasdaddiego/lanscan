@@ -1,4 +1,5 @@
 """Tests for lanscan.vendors — MAC normalisation and OUI -> vendor lookup."""
+
 import urllib.error
 
 import pytest
@@ -7,31 +8,39 @@ from lanscan import vendors
 
 # A tiny manuf file exercising the /24, /28 and /36 prefix tables plus the
 # comment / blank / short-line skips.
-_MANUF = "\n".join([
-    "# a comment line",
-    "",
-    "00:1A:2B\tAcme24",
-    "00:1A:2B:30:00:00/28\tAcme28",
-    "00:1A:2B:30:40:00/36\tAcme36",
-    "no-tab-here",          # < 2 fields -> skipped
-    "FF:FF:FF\tBroadcastVendor",
-]) + "\n"
+_MANUF = (
+    "\n".join(
+        [
+            "# a comment line",
+            "",
+            "00:1A:2B\tAcme24",
+            "00:1A:2B:30:00:00/28\tAcme28",
+            "00:1A:2B:30:40:00/36\tAcme36",
+            "no-tab-here",  # < 2 fields -> skipped
+            "FF:FF:FF\tBroadcastVendor",
+        ]
+    )
+    + "\n"
+)
 
 
-@pytest.mark.parametrize("raw,expected", [
-    (None, None),
-    ("", None),
-    ("AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF"),
-    ("aa:bb:cc:dd:ee:ff", "AA:BB:CC:DD:EE:FF"),
-    ("c:ef:15:3f:e4:0", "0C:EF:15:3F:E4:00"),        # macOS zero-stripped octets
-    ("aa-bb-cc-dd-ee-ff", "AA:BB:CC:DD:EE:FF"),       # dash separator
-    ("aabbccddeeff", "AA:BB:CC:DD:EE:FF"),            # bare 12 hex
-    ("001a.2b3c.4d5e", "00:1A:2B:3C:4D:5E"),          # Cisco dotted
-    ("1:2:3", None),                                  # wrong octet count
-    ("zz:bb:cc:dd:ee:ff", None),                      # non-hex octet
-    ("123:45:67:89:ab:cd", None),                     # octet too long
-    ("aabbcc", None),                                 # bare but wrong length
-])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, None),
+        ("", None),
+        ("AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF"),
+        ("aa:bb:cc:dd:ee:ff", "AA:BB:CC:DD:EE:FF"),
+        ("c:ef:15:3f:e4:0", "0C:EF:15:3F:E4:00"),  # macOS zero-stripped octets
+        ("aa-bb-cc-dd-ee-ff", "AA:BB:CC:DD:EE:FF"),  # dash separator
+        ("aabbccddeeff", "AA:BB:CC:DD:EE:FF"),  # bare 12 hex
+        ("001a.2b3c.4d5e", "00:1A:2B:3C:4D:5E"),  # Cisco dotted
+        ("1:2:3", None),  # wrong octet count
+        ("zz:bb:cc:dd:ee:ff", None),  # non-hex octet
+        ("123:45:67:89:ab:cd", None),  # octet too long
+        ("aabbcc", None),  # bare but wrong length
+    ],
+)
 def test_normalize_mac(raw, expected):
     assert vendors.normalize_mac(raw) == expected
 
@@ -100,8 +109,9 @@ class _FakeResp:
 
 
 def test_update_manuf_success(manuf_cache, monkeypatch):
-    monkeypatch.setattr(vendors.urllib.request, "urlopen",
-                        lambda *a, **k: _FakeResp(_MANUF.encode()))
+    monkeypatch.setattr(
+        vendors.urllib.request, "urlopen", lambda *a, **k: _FakeResp(_MANUF.encode())
+    )
     ok, msg = vendors.update_manuf()
     assert ok is True
     assert manuf_cache.exists()
@@ -134,6 +144,6 @@ async def test_preload_parses_once_off_loop(manuf_cache, monkeypatch):
 
     monkeypatch.setattr(vendors, "_tables", vendors.lru_cache(maxsize=1)(counting))
     await vendors.preload()
-    await vendors.preload()          # already cached -> no second parse
+    await vendors.preload()  # already cached -> no second parse
     assert calls == [1]
     assert vendors.lookup("B8:27:EB:00:00:01") == "Raspberry Pi"

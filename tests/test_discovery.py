@@ -3,6 +3,7 @@
 zeroconf's AsyncZeroconf / AsyncServiceBrowser / AsyncServiceInfo and the event
 loop are all faked, so nothing touches the network or spawns real browsers.
 """
+
 import pytest
 
 from lanscan import discovery
@@ -211,8 +212,9 @@ async def test_resolve_request_false(monkeypatch):
 
 
 async def test_resolve_with_friendly_name(monkeypatch):
-    info = _Info(properties={b"fn": b"Living Room"},
-                 addresses=["192.168.0.5", "fe80::1"])  # IPv6 dropped
+    info = _Info(
+        properties={b"fn": b"Living Room"}, addresses=["192.168.0.5", "fe80::1"]
+    )  # IPv6 dropped
     monkeypatch.setattr(discovery, "AsyncServiceInfo", _info_factory(info))
     md = MdnsDiscovery()
     md._azc = FakeAZC()
@@ -258,21 +260,27 @@ async def test_resolve_again_releases_departed_ip(monkeypatch):
     md = MdnsDiscovery()
     md._azc = FakeAZC()
     sonos, raop = "Kitchen._sonos._tcp.local.", "Kitchen._raop._tcp.local."
-    monkeypatch.setattr(discovery, "AsyncServiceInfo",
-                        _info_factory(_Info(properties={}, addresses=["192.168.0.41"])))
+    monkeypatch.setattr(
+        discovery,
+        "AsyncServiceInfo",
+        _info_factory(_Info(properties={}, addresses=["192.168.0.41"])),
+    )
     await md._resolve("_sonos._tcp.local.", sonos)
     await md._resolve("_raop._tcp.local.", raop)
     assert md.snapshot()["192.168.0.41"]["services"] == {"Sonos", "AirPlay-Audio"}
 
-    monkeypatch.setattr(discovery, "AsyncServiceInfo",
-                        _info_factory(_Info(properties={}, addresses=["192.168.0.55"])))
+    monkeypatch.setattr(
+        discovery,
+        "AsyncServiceInfo",
+        _info_factory(_Info(properties={}, addresses=["192.168.0.55"])),
+    )
     await md._resolve("_sonos._tcp.local.", sonos)
     assert md.snapshot() == {
         "192.168.0.41": {"name": "Kitchen", "services": {"AirPlay-Audio"}},  # raop only
         "192.168.0.55": {"name": "Kitchen", "services": {"Sonos"}},
     }
     md._forget(raop)
-    assert set(md.snapshot()) == {"192.168.0.55"}   # nothing left claiming .41
+    assert set(md.snapshot()) == {"192.168.0.55"}  # nothing left claiming .41
 
 
 async def test_resolve_swallows_exceptions(monkeypatch):
@@ -302,8 +310,9 @@ def test_forget_rebuilds_from_remaining_records():
         "c": {"ips": {ip}, "label": "HTTP", "instance": None},  # no instance
         "d": {"ips": {"192.168.0.99"}, "label": "SSH", "instance": "Other"},  # other IP
     }
-    md._by_ip = {ip: {"name": "Speaker", "services": {"AirPlay", "Sonos", "HTTP"},
-                      "instances": {"Speaker"}}}
+    md._by_ip = {
+        ip: {"name": "Speaker", "services": {"AirPlay", "Sonos", "HTTP"}, "instances": {"Speaker"}}
+    }
 
     md._forget("a")
     # Rebuilt from b + c: services shrink, name still backed by b's instance.

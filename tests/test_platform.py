@@ -1,4 +1,5 @@
 """Tests for lanscan._platform."""
+
 from lanscan import _platform
 
 

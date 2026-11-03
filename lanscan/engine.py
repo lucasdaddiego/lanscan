@@ -9,6 +9,7 @@ The sweep sends every echo from one unprivileged ICMP datagram socket (macOS
 always allows one; Linux when `net.ipv4.ping_group_range` covers our group) and
 falls back to spawning `ping` per host where that socket isn't available.
 """
+
 import asyncio
 import contextlib
 import os
@@ -68,7 +69,7 @@ def _checksum(data: bytes) -> int:
     checksum is silently dropped); Linux overwrites whatever we send."""
     if len(data) % 2:
         data += b"\0"
-    total = sum(int.from_bytes(data[i:i + 2], "big") for i in range(0, len(data), 2))
+    total = sum(int.from_bytes(data[i : i + 2], "big") for i in range(0, len(data), 2))
     total = (total >> 16) + (total & 0xFFFF)
     total += total >> 16
     return ~total & 0xFFFF
@@ -77,8 +78,9 @@ def _checksum(data: bytes) -> int:
 def _echo_request(seq: int) -> bytes:
     head = struct.pack("!BBHHH", _ICMP_ECHO_REQUEST, 0, 0, _ICMP_ID, seq & 0xFFFF)
     csum = _checksum(head + _ECHO_PAYLOAD)
-    return struct.pack("!BBHHH", _ICMP_ECHO_REQUEST, 0, csum, _ICMP_ID, seq & 0xFFFF) \
-        + _ECHO_PAYLOAD
+    return (
+        struct.pack("!BBHHH", _ICMP_ECHO_REQUEST, 0, csum, _ICMP_ID, seq & 0xFFFF) + _ECHO_PAYLOAD
+    )
 
 
 class _EchoCollector(asyncio.DatagramProtocol):
@@ -91,7 +93,7 @@ class _EchoCollector(asyncio.DatagramProtocol):
         # macOS/BSD hands us the IP header too (first nibble = version 4); Linux
         # ping sockets strip it. Either way the ICMP type byte follows.
         if data and data[0] >> 4 == 4:
-            data = data[(data[0] & 0x0F) * 4:]
+            data = data[(data[0] & 0x0F) * 4 :]
         if data and data[0] == _ICMP_ECHO_REPLY:
             self.alive.add(addr[0])
 
@@ -106,9 +108,9 @@ def _icmp_socket() -> socket.socket | None:
     return sock
 
 
-async def _icmp_sweep(targets: list[str], timeout: float,
-                      progress: ProgressCB | None, *,
-                      pause: float = _BATCH_PAUSE) -> set[str] | None:
+async def _icmp_sweep(
+    targets: list[str], timeout: float, progress: ProgressCB | None, *, pause: float = _BATCH_PAUSE
+) -> set[str] | None:
     """Echo every target from one socket; return who answered within `timeout`.
 
     None when the socket isn't available, so the caller can fall back to `ping`.
@@ -159,7 +161,8 @@ async def _ping(ip: str, timeout: float, sem: asyncio.Semaphore) -> tuple[str, b
         try:
             proc = await asyncio.create_subprocess_exec(
                 *_ping_argv(ip, timeout),
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
         except OSError:
             return ip, False
@@ -180,8 +183,9 @@ async def _ping(ip: str, timeout: float, sem: asyncio.Semaphore) -> tuple[str, b
         return ip, rc == 0
 
 
-async def _ping_sweep(targets: list[str], timeout: float, concurrency: int,
-                      progress: ProgressCB | None) -> set[str]:
+async def _ping_sweep(
+    targets: list[str], timeout: float, concurrency: int, progress: ProgressCB | None
+) -> set[str]:
     """Spawn `ping` per target, `concurrency` at a time; return who answered."""
     sem = asyncio.Semaphore(concurrency)
     alive: set[str] = set()
@@ -216,8 +220,9 @@ def _rdns_pool() -> ThreadPoolExecutor:
     other and time out before they even started."""
     global _RDNS_POOL
     if _RDNS_POOL is None:
-        _RDNS_POOL = ThreadPoolExecutor(max_workers=_RDNS_WORKERS,
-                                        thread_name_prefix="lanscan-rdns")
+        _RDNS_POOL = ThreadPoolExecutor(
+            max_workers=_RDNS_WORKERS, thread_name_prefix="lanscan-rdns"
+        )
     return _RDNS_POOL
 
 
@@ -225,7 +230,8 @@ async def _reverse_dns(ip: str, timeout: float) -> tuple[str, str | None]:
     loop = asyncio.get_running_loop()
     try:
         res = await asyncio.wait_for(
-            loop.run_in_executor(_rdns_pool(), socket.gethostbyaddr, ip), timeout=timeout)
+            loop.run_in_executor(_rdns_pool(), socket.gethostbyaddr, ip), timeout=timeout
+        )
         return ip, sanitize(res[0])  # a PTR record is remote-controlled text
     except OSError:  # includes TimeoutError; herror/gaierror are OSErrors too
         return ip, None
@@ -236,7 +242,7 @@ def _quiet_run(cmd: list[str]) -> str:
     """stdout of cmd, or "" when it cannot run."""
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return ""
 
 
@@ -249,10 +255,13 @@ def _launchd_run(cmd: list[str], timeout: float = 2.0) -> str:
     with tempfile.TemporaryDirectory() as tmp:
         out = os.path.join(tmp, "out")
         try:
-            if subprocess.run(["launchctl", "submit", "-l", label, "-o", out, "--", *cmd],
-                              capture_output=True, timeout=5).returncode:
+            if subprocess.run(
+                ["launchctl", "submit", "-l", label, "-o", out, "--", *cmd],
+                capture_output=True,
+                timeout=5,
+            ).returncode:
                 return ""
-        except (OSError, subprocess.SubprocessError):
+        except OSError, subprocess.SubprocessError:
             return ""
         try:
             deadline = time.monotonic() + timeout
@@ -291,7 +300,7 @@ def read_arp(targets: dict[str, str]) -> dict[str, tuple[str, str]]:
         cmd, pattern = ["arp", "-a", "-n"], _ARP_LINE
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return {}
     if not out.strip() and not is_linux():
         out = _launchd_run(["/usr/sbin/arp", "-a", "-n"])
@@ -359,18 +368,20 @@ async def scan(
             raw_mac, dev = iface_self.mac, iface_self.device
         mac = vendors.normalize_mac(raw_mac)
         randomized = bool(mac and vendors.is_locally_administered(mac))
-        devices.append(Device(
-            ip=ip,
-            interface=dev,
-            mac=mac,
-            vendor=vendors.lookup(mac),
-            randomized_mac=randomized,
-            is_self=iface_self is not None,
-            is_gateway=(ip == gateway),
-            via="self" if iface_self else "icmp" if ip in alive else "arp",
-            first_seen=now,
-            last_seen=now,
-        ))
+        devices.append(
+            Device(
+                ip=ip,
+                interface=dev,
+                mac=mac,
+                vendor=vendors.lookup(mac),
+                randomized_mac=randomized,
+                is_self=iface_self is not None,
+                is_gateway=(ip == gateway),
+                via="self" if iface_self else "icmp" if ip in alive else "arp",
+                first_seen=now,
+                last_seen=now,
+            )
+        )
 
     # 3. Reverse DNS (parallel, bounded to the pool width so each lookup's clock
     # starts when it actually runs).
@@ -421,8 +432,7 @@ async def scan(
 
             async def _banner(dev: Device) -> None:
                 async with bsem:
-                    dev.http_server, dev.http_title = await banners.identify(
-                        dev.ip, dev.open_ports)
+                    dev.http_server, dev.http_title = await banners.identify(dev.ip, dev.open_ports)
 
             await asyncio.gather(*(_banner(d) for d in devices))
 

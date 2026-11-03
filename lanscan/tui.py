@@ -6,6 +6,7 @@ The list refreshes on an interval, runs mDNS in the background, re-discovers
 interfaces each cycle, and keeps the selection pinned to the same device (by IP)
 across refreshes.
 """
+
 import argparse
 import asyncio
 import json
@@ -42,8 +43,8 @@ _SCOPE_LABEL = {None: "All", "wifi": "Wi-Fi", "ethernet": "Ethernet"}
 
 # Compact master columns; everything wide lives in the detail pane.
 _COLUMNS = (
-    ("", 2),       # status dot
-    ("IP", 16),    # always shown
+    ("", 2),  # status dot
+    ("IP", 16),  # always shown
     ("Name", 22),  # friendly name (+ role), blank when unknown
 )
 
@@ -51,24 +52,49 @@ _COLUMNS = (
 # inside raw rich style strings, so every renderable below uses concrete hex —
 # which Ghostty (and any truecolor terminal) reproduces exactly.
 C = {
-    "blue": "#7aa2f7", "cyan": "#7dcfff", "green": "#9ece6a", "yellow": "#e0af68",
-    "orange": "#ff9e64", "purple": "#bb9af7", "red": "#f7768e", "teal": "#73daca",
-    "fg": "#c0caf5", "muted": "#7c83ad", "faint": "#565f89", "bg": "#1a1b26",
+    "blue": "#7aa2f7",
+    "cyan": "#7dcfff",
+    "green": "#9ece6a",
+    "yellow": "#e0af68",
+    "orange": "#ff9e64",
+    "purple": "#bb9af7",
+    "red": "#f7768e",
+    "teal": "#73daca",
+    "fg": "#c0caf5",
+    "muted": "#7c83ad",
+    "faint": "#565f89",
+    "bg": "#1a1b26",
 }
 PAL = {
-    "ip": C["cyan"], "ip_new": f"bold {C['cyan']}", "new": f"bold {C['green']}",
-    "router": C["yellow"], "self": C["cyan"], "ok": C["green"], "svc": C["purple"],
-    "warn": C["yellow"], "muted": C["faint"], "label": C["muted"],
-    "head": f"bold {C['fg']}", "accent": C["blue"],
+    "ip": C["cyan"],
+    "ip_new": f"bold {C['cyan']}",
+    "new": f"bold {C['green']}",
+    "router": C["yellow"],
+    "self": C["cyan"],
+    "ok": C["green"],
+    "svc": C["purple"],
+    "warn": C["yellow"],
+    "muted": C["faint"],
+    "label": C["muted"],
+    "head": f"bold {C['fg']}",
+    "accent": C["blue"],
 }
 
 # A Textual theme so borders, scrollbars, the row cursor and panels all share the
 # palette above (CSS uses $primary / $surface / $panel / $accent, etc.).
 THEME = Theme(
-    name="lanscan", dark=True,
-    background=C["bg"], surface="#24283b", panel="#1f2335",
-    primary=C["blue"], secondary=C["purple"], accent=C["cyan"],
-    success=C["green"], warning=C["yellow"], error=C["red"], foreground=C["fg"],
+    name="lanscan",
+    dark=True,
+    background=C["bg"],
+    surface="#24283b",
+    panel="#1f2335",
+    primary=C["blue"],
+    secondary=C["purple"],
+    accent=C["cyan"],
+    success=C["green"],
+    warning=C["yellow"],
+    error=C["red"],
+    foreground=C["fg"],
 )
 
 
@@ -79,9 +105,14 @@ def _badge(text: str, color: str) -> Text:
 
 # Port/service → category → colour, so a glance at the ports list groups them.
 _CAT_COLOR = {
-    "web": C["blue"], "shell": C["green"], "file": C["yellow"],
-    "media": C["purple"], "data": C["orange"], "iot": C["cyan"],
-    "mail": C["red"], "infra": C["muted"],
+    "web": C["blue"],
+    "shell": C["green"],
+    "file": C["yellow"],
+    "media": C["purple"],
+    "data": C["orange"],
+    "iot": C["cyan"],
+    "mail": C["red"],
+    "infra": C["muted"],
 }
 
 
@@ -91,13 +122,31 @@ def _port_color(name: str | None) -> str:
 
 # mDNS service labels are free-form friendly names, so match by keyword.
 _SVC_KEYWORDS = (
-    ("airplay", "media"), ("airtunes", "media"), ("cast", "media"),
-    ("chromecast", "media"), ("spotify", "media"), ("dlna", "media"),
-    ("roku", "media"), ("sonos", "media"), ("print", "file"), ("ipp", "file"),
-    ("smb", "file"), ("afp", "file"), ("nfs", "file"), ("file", "file"),
-    ("time capsule", "file"), ("ssh", "shell"), ("sftp", "shell"),
-    ("remote", "shell"), ("homekit", "iot"), ("home", "iot"), ("matter", "iot"),
-    ("thread", "iot"), ("mqtt", "iot"), ("companion", "iot"), ("http", "web"),
+    ("airplay", "media"),
+    ("airtunes", "media"),
+    ("cast", "media"),
+    ("chromecast", "media"),
+    ("spotify", "media"),
+    ("dlna", "media"),
+    ("roku", "media"),
+    ("sonos", "media"),
+    ("print", "file"),
+    ("ipp", "file"),
+    ("smb", "file"),
+    ("afp", "file"),
+    ("nfs", "file"),
+    ("file", "file"),
+    ("time capsule", "file"),
+    ("ssh", "shell"),
+    ("sftp", "shell"),
+    ("remote", "shell"),
+    ("homekit", "iot"),
+    ("home", "iot"),
+    ("matter", "iot"),
+    ("thread", "iot"),
+    ("mqtt", "iot"),
+    ("companion", "iot"),
+    ("http", "web"),
     ("web", "web"),
 )
 
@@ -276,6 +325,7 @@ class LanScanApp(App[None]):
         if not self.args.no_mdns:
             try:
                 from .discovery import MdnsDiscovery
+
                 self._mdns = MdnsDiscovery()
                 await self._mdns.start()
             except Exception:  # mDNS is optional
@@ -325,15 +375,19 @@ class LanScanApp(App[None]):
         kind = self._kind  # the scope this run was started for
         cancelled = False
         try:
-            self._ifaces = net.discover_interfaces(
-                only_device=self.args.interface, only_kind=kind)
+            self._ifaces = net.discover_interfaces(only_device=self.args.interface, only_kind=kind)
             self._update_status()
             await vendors.preload()  # one-off parse off the loop; no-op after
             devices = await scan(
-                self._ifaces, resolve=not self.args.no_resolve, mdns=self._mdns,
-                ssdp_enabled=not self.args.no_ssdp, scan_ports=self._ports,
-                http_id=not self.args.no_http, timeout=self.args.timeout,
-                progress=self._on_progress)
+                self._ifaces,
+                resolve=not self.args.no_resolve,
+                mdns=self._mdns,
+                ssdp_enabled=not self.args.no_ssdp,
+                scan_ports=self._ports,
+                http_id=not self.args.no_http,
+                timeout=self.args.timeout,
+                progress=self._on_progress,
+            )
             if self._kind == kind:  # scope unchanged → the results still describe it
                 self._apply(devices)
         except asyncio.CancelledError:
@@ -409,8 +463,9 @@ class LanScanApp(App[None]):
             else:
                 dot = Text("·", style="dim")
 
-            ip = Text(d.ip, overflow="ellipsis", no_wrap=True,
-                      style=PAL["ip_new"] if is_new else "")
+            ip = Text(
+                d.ip, overflow="ellipsis", no_wrap=True, style=PAL["ip_new"] if is_new else ""
+            )
 
             nm = Text(overflow="ellipsis", no_wrap=True)
             if d.name:
@@ -451,12 +506,12 @@ class LanScanApp(App[None]):
         if dev is None:
             return
         if not dev.open_ports:
-            self.notify("No open ports — press f to full-scan this device.",
-                        severity="warning")
+            self.notify("No open ports — press f to full-scan this device.", severity="warning")
             return
         entries = [(p, ports.PORT_NAMES.get(p)) for p in dev.open_ports]
-        self.push_screen(PortPicker(dev.ip, entries),
-                         lambda res, ip=dev.ip: self._launch_port(ip, res))
+        self.push_screen(
+            PortPicker(dev.ip, entries), lambda res, ip=dev.ip: self._launch_port(ip, res)
+        )
 
     def _launch_port(self, ip: str, result: PortChoice) -> None:
         if not result:
@@ -465,8 +520,12 @@ class LanScanApp(App[None]):
         ok, msg = launch.launch(ip, port, service)
         # markup=False: a failure carries the OSError text ("[Errno 2] ..."), and
         # Rich markup would eat any "[word]" in it.
-        self.notify(msg, title=f"Connect {ip}:{port}",
-                    severity="information" if ok else "error", markup=False)
+        self.notify(
+            msg,
+            title=f"Connect {ip}:{port}",
+            severity="information" if ok else "error",
+            markup=False,
+        )
 
     # ---- detail pane ----------------------------------------------------
     def _device_by_ip(self, ip: str | None) -> Device | None:
@@ -484,12 +543,29 @@ class LanScanApp(App[None]):
             return ("placeholder", self._scanned_once, bool(self._devices), self._kind)
         fs = self._fullscan if (self._fullscan and self._fullscan[0] == dev.ip) else None
         return (
-            dev.ip, dev.name, dev.mdns_name, dev.hostname, dev.vendor, dev.mac,
-            dev.randomized_mac, dev.interface, dev.via, dev.is_gateway, dev.is_self,
-            dev.upnp_name, dev.upnp_model, dev.http_server, dev.http_title,
-            tuple(dev.open_ports), tuple(dev.services),
-            dev.ip in self._new, dev.ip in self._full_ports,
-            dev.ever_seen, int(dev.first_seen), int(dev.last_seen), fs,
+            dev.ip,
+            dev.name,
+            dev.mdns_name,
+            dev.hostname,
+            dev.vendor,
+            dev.mac,
+            dev.randomized_mac,
+            dev.interface,
+            dev.via,
+            dev.is_gateway,
+            dev.is_self,
+            dev.upnp_name,
+            dev.upnp_model,
+            dev.http_server,
+            dev.http_title,
+            tuple(dev.open_ports),
+            tuple(dev.services),
+            dev.ip in self._new,
+            dev.ip in self._full_ports,
+            dev.ever_seen,
+            int(dev.first_seen),
+            int(dev.last_seen),
+            fs,
         )
 
     def _refresh_detail(self, *, force: bool = False) -> None:
@@ -591,8 +667,9 @@ class LanScanApp(App[None]):
             mac = Text(DASH, style="dim")
         netg.add_row("MAC", mac)
         netg.add_row("Iface", _val(dev.interface))
-        netg.add_row("Via", Text(_VIA.get(dev.via, dev.via or DASH),
-                                 style="" if dev.via in _VIA else "dim"))
+        netg.add_row(
+            "Via", Text(_VIA.get(dev.via, dev.via or DASH), style="" if dev.via in _VIA else "dim")
+        )
         if dev.is_gateway:
             netg.add_row("Role", Text("gateway / router", style=PAL["warn"]))
         elif dev.is_self:
@@ -631,8 +708,9 @@ class LanScanApp(App[None]):
 
         # SERVICES
         if dev.services:
-            chips = Columns([_badge(s, _svc_color(s)) for s in dev.services],
-                            padding=(0, 1), expand=False)
+            chips = Columns(
+                [_badge(s, _svc_color(s)) for s in dev.services], padding=(0, 1), expand=False
+            )
             blocks.append(section("SERVICES", chips))
 
         # ACTIVITY
@@ -640,6 +718,7 @@ class LanScanApp(App[None]):
 
         def ts(v: float) -> str:
             return time.strftime("%H:%M:%S", time.localtime(v)) if v else DASH
+
         # Persisted history can put first-seen days ago, so show the date when it's old.
         if dev.first_seen and time.time() - dev.first_seen >= 86400:
             first_txt = time.strftime("%b %d %H:%M", time.localtime(dev.first_seen))
@@ -671,9 +750,10 @@ class LanScanApp(App[None]):
         except Exception:  # not mounted yet
             return
         scope = _SCOPE_LABEL[self._kind]
-        parts = [f"{i.label} {i.cidr}"
-                 + ("" if net.sweepable(i.cidr) else " (too large to sweep)")
-                 for i in self._ifaces]
+        parts = [
+            f"{i.label} {i.cidr}" + ("" if net.sweepable(i.cidr) else " (too large to sweep)")
+            for i in self._ifaces
+        ]
         nets = "  ".join(parts) or "no active interface"
         spin = _SPINNER[self._spin]
 
@@ -694,8 +774,11 @@ class LanScanApp(App[None]):
             line.append("paused ", style=C["yellow"])
             line.append("(p to resume)", style=PAL["muted"])
         else:
-            when = (time.strftime("%H:%M:%S", time.localtime(self._last_scan))
-                    if self._last_scan else "—")
+            when = (
+                time.strftime("%H:%M:%S", time.localtime(self._last_scan))
+                if self._last_scan
+                else "—"
+            )
             n = len(self._devices)
             line.append("● ", style=C["green"])
             line.append(f"{n} device{'s' if n != 1 else ''}", style=C["fg"])
@@ -732,13 +815,11 @@ class LanScanApp(App[None]):
             doc = document(self._devices_ifaces, self._devices)
             path.write_text(json.dumps(doc, indent=2) + "\n")
         except OSError as exc:
-            self.notify(f"Export failed: {exc}", title="Export", severity="error",
-                        markup=False)
+            self.notify(f"Export failed: {exc}", title="Export", severity="error", markup=False)
             return
         n = len(self._devices)
         # markup=False: a working directory like ~/scans/[old] would lose "[old]".
-        self.notify(f"{n} device{'s' if n != 1 else ''} → {path}", title="Exported",
-                    markup=False)
+        self.notify(f"{n} device{'s' if n != 1 else ''} → {path}", title="Exported", markup=False)
 
     def action_toggle_ports(self) -> None:
         self._ports = not self._ports
@@ -770,8 +851,9 @@ class LanScanApp(App[None]):
     async def _run_full_scan(self, ip: str) -> None:
         self._fullscan = (ip, 0, 65535)
         self._wake_spinner()
-        self.notify(f"Full-scanning {ip} — gentle, can take a while. Press f to cancel.",
-                    title="Full scan")
+        self.notify(
+            f"Full-scanning {ip} — gentle, can take a while. Press f to cancel.", title="Full scan"
+        )
         self._update_status()
         self._refresh_detail()  # the PORTS header picks up "scanning 0%"
 
@@ -787,8 +869,12 @@ class LanScanApp(App[None]):
             self.notify(f"Full scan of {ip} cancelled.", severity="warning")
             raise
         except Exception as exc:  # best-effort; never crash the TUI
-            self.notify(f"Full scan of {ip} failed: {exc}", title="Full scan",
-                        severity="error", markup=False)
+            self.notify(
+                f"Full scan of {ip} failed: {exc}",
+                title="Full scan",
+                severity="error",
+                markup=False,
+            )
             return
         finally:
             self._fullscan = None
@@ -802,8 +888,7 @@ class LanScanApp(App[None]):
                 d.open_ports = sorted(set(d.open_ports) | set(found))
         self._refresh_detail()
         shown = ", ".join(map(str, found[:15])) + (" …" if len(found) > 15 else "")
-        self.notify(f"{ip}: {len(found)} open ports — {shown or 'none'}",
-                    title="Full scan done")
+        self.notify(f"{ip}: {len(found)} open ports — {shown or 'none'}", title="Full scan done")
 
     def action_toggle_pause(self) -> None:
         self._paused = not self._paused
@@ -813,7 +898,7 @@ class LanScanApp(App[None]):
         self._kind = _KIND_CYCLE[self._kind]
         self._known.clear()  # filter changed; don't flag everything as "new"
         self._scanned_once = False
-        self._devices = []   # drop stale rows/selection so the placeholder shows now
+        self._devices = []  # drop stale rows/selection so the placeholder shows now
         self._selected_ip = None
         self._new = set()
         self._refresh_table()

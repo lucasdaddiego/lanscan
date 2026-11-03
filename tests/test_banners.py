@@ -2,6 +2,7 @@
 
 All sockets are mocked via asyncio.open_connection; nothing hits the network.
 """
+
 import asyncio
 import ssl
 
@@ -27,7 +28,7 @@ class FakeReader:
         if not self._chunks:
             return b""
         chunk = self._chunks.pop(0)
-        if len(chunk) > n:                  # a real read() never overruns the cap
+        if len(chunk) > n:  # a real read() never overruns the cap
             self._chunks.insert(0, chunk[n:])
             chunk = chunk[:n]
         return chunk
@@ -42,7 +43,7 @@ class StallingReader:
 
     async def read(self, n):
         if self._sent:
-            await asyncio.sleep(3600)       # only the deadline gets us out
+            await asyncio.sleep(3600)  # only the deadline gets us out
         self._sent = True
         return self._first
 
@@ -93,7 +94,7 @@ _RESPONSE = (
 def test_tls_context_permissive_and_cached():
     a = banners._tls_context()
     b = banners._tls_context()
-    assert a is b                              # cached
+    assert a is b  # cached
     assert a.check_hostname is False
     assert a.verify_mode == ssl.CERT_NONE
 
@@ -127,16 +128,19 @@ def test_split_response_skips_colonless_header_lines():
 
 
 # ---- _title ---------------------------------------------------------------
-@pytest.mark.parametrize("body,expected", [
-    (b"<title>Hello</title>", "Hello"),
-    (b"<TITLE>\n  My   Device \n</TITLE>", "My Device"),   # collapsed whitespace
-    (b"<html>no title here</html>", None),
-    (b"<title></title>", None),                            # empty
-    (b"<title>AT&amp;T Router &#8211; Login</title>", "AT&T Router \u2013 Login"),  # entities
-    # Raw ESC, an entity-spelled RTL override (decoded first, then sanitized)
-    # and a raw 8-bit CSI (U+009B) all become `·`.
-    (b"<title>\x1b[2J Cam &#8238;\xc2\x9b</title>", "\u00b7[2J Cam \u00b7\u00b7"),
-])
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        (b"<title>Hello</title>", "Hello"),
+        (b"<TITLE>\n  My   Device \n</TITLE>", "My Device"),  # collapsed whitespace
+        (b"<html>no title here</html>", None),
+        (b"<title></title>", None),  # empty
+        (b"<title>AT&amp;T Router &#8211; Login</title>", "AT&T Router \u2013 Login"),  # entities
+        # Raw ESC, an entity-spelled RTL override (decoded first, then sanitized)
+        # and a raw 8-bit CSI (U+009B) all become `·`.
+        (b"<title>\x1b[2J Cam &#8238;\xc2\x9b</title>", "\u00b7[2J Cam \u00b7\u00b7"),
+    ],
+)
 def test_title(body, expected):
     assert banners._title(body) == expected
 
@@ -155,16 +159,18 @@ async def test_fetch_ok(monkeypatch):
 async def test_fetch_reads_body_that_arrives_after_the_headers(monkeypatch):
     """A server that flushes headers and body as separate writes still yields a
     title — one read() would return only the headers and lose the whole body."""
-    reader = FakeReader(chunks=[
-        b"HTTP/1.1 200 OK\r\nServer: acme-httpd/1.0\r\n\r\n",
-        b"<html><head><title>Acme Router Admin</title></head></html>",
-    ])
+    reader = FakeReader(
+        chunks=[
+            b"HTTP/1.1 200 OK\r\nServer: acme-httpd/1.0\r\n\r\n",
+            b"<html><head><title>Acme Router Admin</title></head></html>",
+        ]
+    )
     _patch_conn(monkeypatch, reader=reader, writer=FakeWriter())
     status, headers, body = await banners.fetch("1.2.3.4", 80)
     assert status == 200
     assert headers["server"] == "acme-httpd/1.0"
     assert banners._title(body) == "Acme Router Admin"
-    assert reader.reads == 3                # headers, body, EOF
+    assert reader.reads == 3  # headers, body, EOF
 
 
 async def test_fetch_stops_at_max_bytes(monkeypatch):
@@ -175,13 +181,16 @@ async def test_fetch_stops_at_max_bytes(monkeypatch):
     _status, _headers, body = await banners.fetch("1.2.3.4", 80, max_bytes=len(head))
     assert banners._title(body) == "Small"
     assert b"NEVER READ" not in body
-    assert reader.reads == 1                # capped, so no second read
+    assert reader.reads == 1  # capped, so no second read
 
 
 async def test_fetch_keeps_headers_when_the_body_never_arrives(monkeypatch):
     """A device that stalls after its headers still gives up a Server banner."""
-    _patch_conn(monkeypatch, writer=FakeWriter(),
-                reader=StallingReader(b"HTTP/1.1 200 OK\r\nServer: stalled/1.0\r\n\r\n"))
+    _patch_conn(
+        monkeypatch,
+        writer=FakeWriter(),
+        reader=StallingReader(b"HTTP/1.1 200 OK\r\nServer: stalled/1.0\r\n\r\n"),
+    )
     status, headers, body = await banners.fetch("1.2.3.4", 80, timeout=0.05)
     assert status == 200
     assert headers["server"] == "stalled/1.0"
@@ -199,22 +208,25 @@ async def test_fetch_connect_timeout(monkeypatch):
 
 
 async def test_fetch_drain_error(monkeypatch):
-    _patch_conn(monkeypatch, reader=FakeReader(_RESPONSE),
-                writer=FakeWriter(drain_exc=OSError("broken pipe")))
+    _patch_conn(
+        monkeypatch,
+        reader=FakeReader(_RESPONSE),
+        writer=FakeWriter(drain_exc=OSError("broken pipe")),
+    )
     assert await banners.fetch("1.2.3.4", 80) is None
 
 
 async def test_fetch_read_error(monkeypatch):
-    _patch_conn(monkeypatch, reader=FakeReader(read_exc=OSError("reset")),
-                writer=FakeWriter())
+    _patch_conn(monkeypatch, reader=FakeReader(read_exc=OSError("reset")), writer=FakeWriter())
     assert await banners.fetch("1.2.3.4", 80) is None
 
 
 async def test_fetch_wait_closed_error_suppressed(monkeypatch):
-    _patch_conn(monkeypatch, reader=FakeReader(_RESPONSE),
-                writer=FakeWriter(wait_exc=OSError("reset")))
+    _patch_conn(
+        monkeypatch, reader=FakeReader(_RESPONSE), writer=FakeWriter(wait_exc=OSError("reset"))
+    )
     res = await banners.fetch("1.2.3.4", 80)
-    assert res[0] == 200       # the close-time error is swallowed
+    assert res[0] == 200  # the close-time error is swallowed
 
 
 async def test_fetch_tls_passes_context(monkeypatch):

@@ -1,4 +1,5 @@
 """Tests for lanscan.oneshot — the headless `--once [--json]` mode."""
+
 import io
 import json
 
@@ -10,16 +11,33 @@ from lanscan.models import Device, Interface
 
 
 def _iface() -> Interface:
-    return Interface(device="en0", port="Wi-Fi", kind="wifi", ipv4="192.168.0.10",
-                     prefix=24, cidr="192.168.0.0/24", mac="A0:BB:CC:DD:EE:F0")
+    return Interface(
+        device="en0",
+        port="Wi-Fi",
+        kind="wifi",
+        ipv4="192.168.0.10",
+        prefix=24,
+        cidr="192.168.0.0/24",
+        mac="A0:BB:CC:DD:EE:F0",
+    )
 
 
 def _devices() -> list[Device]:
     return [
-        Device(ip="192.168.0.1", mac="A0:BB:CC:DD:EE:F1", vendor="Acme", mdns_name="Router",
-               open_ports=[22, 80, 443], is_gateway=True),
-        Device(ip="192.168.0.2", mac="12:BB:CC:DD:EE:F2", randomized_mac=True,
-               http_title="A very long web title that will not fit the column"),
+        Device(
+            ip="192.168.0.1",
+            mac="A0:BB:CC:DD:EE:F1",
+            vendor="Acme",
+            mdns_name="Router",
+            open_ports=[22, 80, 443],
+            is_gateway=True,
+        ),
+        Device(
+            ip="192.168.0.2",
+            mac="12:BB:CC:DD:EE:F2",
+            randomized_mac=True,
+            http_title="A very long web title that will not fit the column",
+        ),
         Device(ip="192.168.0.10", mac="A0:BB:CC:DD:EE:F0", is_self=True),
         Device(ip="192.168.0.11", hostname="tv\x1b[2J.local"),  # unsanitized by a fake
     ]
@@ -58,8 +76,11 @@ def mocks(monkeypatch):
         return _devices()
 
     monkeypatch.setattr(oneshot, "scan", fake_scan)
-    monkeypatch.setattr(oneshot.history, "load", lambda: {"A0:BB:CC:DD:EE:F1": {
-        "first_seen": 5.0, "last_seen": 6.0, "name": "Old"}})
+    monkeypatch.setattr(
+        oneshot.history,
+        "load",
+        lambda: {"A0:BB:CC:DD:EE:F1": {"first_seen": 5.0, "last_seen": 6.0, "name": "Old"}},
+    )
     monkeypatch.setattr(oneshot.history, "save", lambda records: calls["saved"].append(records))
     monkeypatch.setattr(oneshot, "MDNS_WARMUP", 0)
     FakeMdns.instances.clear()
@@ -101,9 +122,9 @@ def test_json_output_is_versioned_timestamped_and_sanitized(mocks):
     assert doc["interfaces"][0]["device"] == "en0"
     by_ip = {d["ip"]: d for d in doc["devices"]}
     assert by_ip["192.168.0.1"]["tags"] == ["router"]
-    assert by_ip["192.168.0.1"]["ever_seen"] is False      # --no-history: nothing remembered
-    assert by_ip["192.168.0.11"]["hostname"] == "tv·[2J.local"   # export is sanitized
-    assert mocks["saved"] == []                             # and nothing written
+    assert by_ip["192.168.0.1"]["ever_seen"] is False  # --no-history: nothing remembered
+    assert by_ip["192.168.0.11"]["hostname"] == "tv·[2J.local"  # export is sanitized
+    assert mocks["saved"] == []  # and nothing written
 
 
 def test_history_is_merged_into_the_output(mocks):
@@ -156,7 +177,7 @@ def test_cell_counts_terminal_columns_not_characters():
     # A Chinese TV's mDNS name: 4 characters, 8 columns. Padded by len() it
     # pushed the PORTS column 4 places right on that row.
     assert oneshot._cell("客厅电视", 10) == "客厅电视  "
-    assert oneshot._cell("客厅电视机顶盒", 9) == "客厅电视…"     # 8 + 1 columns
-    assert oneshot._cell("客厅电视机顶盒", 8) == "客厅电… "      # 视 would straddle: 6 + 1 + pad
+    assert oneshot._cell("客厅电视机顶盒", 9) == "客厅电视…"  # 8 + 1 columns
+    assert oneshot._cell("客厅电视机顶盒", 8) == "客厅电… "  # 视 would straddle: 6 + 1 + pad
     for text in ("客厅电视机顶盒", "abcdef", "ab"):
         assert oneshot.cell_len(oneshot._cell(text, 8)) <= 8

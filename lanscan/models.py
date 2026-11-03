@@ -1,4 +1,5 @@
 """Core data models for the LAN scanner."""
+
 import unicodedata
 from dataclasses import asdict, dataclass, field
 
@@ -20,8 +21,9 @@ def sanitize(text: str) -> str:
     straight into the detail pane and the JSON export. Applied once, at each
     ingestion point, and again over every string field of ``Device.as_dict``.
     """
-    return "".join(SANITIZE_MARK if unicodedata.category(c) in _UNSAFE_CATEGORIES else c
-                   for c in text)
+    return "".join(
+        SANITIZE_MARK if unicodedata.category(c) in _UNSAFE_CATEGORIES else c for c in text
+    )
 
 
 @dataclass(slots=True)

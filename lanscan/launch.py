@@ -8,6 +8,7 @@ Ghostty, iTerm, or Terminal — falling back to the best installed one; on Linux
 it's the first available GUI terminal (honouring `$TERMINAL`). Everything is
 best-effort and never raises into the TUI.
 """
+
 import os
 import shlex
 import shutil
@@ -22,6 +23,7 @@ def _open_cmd() -> str:
     """The OS opener for URL schemes: `xdg-open` on Linux, `open` on macOS."""
     return "xdg-open" if is_linux() else "open"
 
+
 # Services that open in a browser over plain HTTP: the names of the known HTTP
 # ports, so a non-standard port carrying one of them (e.g. 8009 "cast") also
 # opens as a URL. Anything in the HTTPS set goes out as https://.
@@ -33,8 +35,8 @@ _SCHEME_DEFAULT = {"http": 80, "https": 443, "ftp": 21, "rtsp": 554}
 def plan(ip: str, port: int, service: str | None) -> tuple[str, str, str]:
     """Decide how to connect. Returns (kind, target, label):
 
-      kind == "open"     → run `open <target>` (target is a URL/scheme)
-      kind == "terminal" → run <target> in a fresh terminal window
+    kind == "open"     → run `open <target>` (target is a URL/scheme)
+    kind == "terminal" → run <target> in a fresh terminal window
     """
     s = (service or "").lower()
 
@@ -178,11 +180,11 @@ def _terminal_argv(command: str) -> tuple[list[str], str]:
         # path; Ghostty's own `wait-after-command` doesn't hold a fresh instance.
         shell = os.environ.get("SHELL") or "/bin/zsh"
         inner = f"{command}; exec {shlex.quote(shell)} -il"
-        argv = ["open", "-nb", _GHOSTTY_BUNDLE_ID, "--args", "-e",
-                "/bin/sh", "-c", inner]
+        argv = ["open", "-nb", _GHOSTTY_BUNDLE_ID, "--args", "-e", "/bin/sh", "-c", inner]
         return argv, "Ghostty"
     return ["osascript", "-e", _terminal_script(command, term)], (
-        "iTerm" if term == "iterm" else "Terminal")
+        "iTerm" if term == "iterm" else "Terminal"
+    )
 
 
 def _terminal_script(command: str, term: str) -> str:
@@ -200,9 +202,4 @@ def _terminal_script(command: str, term: str) -> str:
             f'  tell current session of w to write text "{safe}"\n'
             "end tell"
         )
-    return (
-        'tell application "Terminal"\n'
-        "  activate\n"
-        f'  do script "{safe}"\n'
-        "end tell"
-    )
+    return f'tell application "Terminal"\n  activate\n  do script "{safe}"\nend tell'
